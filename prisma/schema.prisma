@@ -1,0 +1,456 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  password  String?
+  photoUrl  String?
+  role      UserRole @default(STUDENT)
+  isPremium Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Subscription fields
+  subscriptionPlan     SubscriptionPlan @default(FREE)
+  stripeCustomerId     String?
+  stripeSubscriptionId String?
+  subscriptionStatus   SubscriptionStatus @default(ACTIVE)
+  trialEndsAt          DateTime?
+  subscriptionEndsAt   DateTime?
+
+  // Relations
+  progress Progress[]
+  userProgress UserProgress[]
+  studentProgress StudentProgress[]
+  courses  Course[]  // For admin users who create courses
+  accounts Account[] // NextAuth.js
+  sessions Session[] // NextAuth.js
+
+  @@map("users")
+}
+
+model Course {
+  id        String   @id @default(cuid())
+  title     String
+  language  String   @default("Solidity")
+  goals     String
+  level     CourseLevel
+  access    CourseAccess
+  status    CourseStatus @default(ACTIVE)
+  thumbnail String?  // Path to thumbnail image
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  modules  Module[]
+  creator  User     @relation(fields: [creatorId], references: [id])
+  creatorId String
+  progress Progress[]
+  userProgress UserProgress[]
+  studentProgress StudentProgress[]
+  courseLanguages CourseLanguage[]
+  courseProject CourseProject?
+
+  @@map("courses")
+}
+
+model Module {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  order       Int      // To maintain module sequence
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  course   Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId String
+  lessons  Lesson[]
+  progress Progress[]
+
+  @@map("modules")
+}
+
+model Lesson {
+  id              String      @id @default(cuid())
+  type            LessonType
+  title           String
+  contentMarkdown String?
+  youtubeUrl      String?
+  order           Int         // To maintain lesson sequence within module
+  initialCode     String?
+  solutionCode    String?
+  tests           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // Relations
+  module         Module         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  moduleId       String
+  progress       Progress[]
+  userProgress   UserProgress[]
+  studentProgress StudentProgress[]
+  challengeTests ChallengeTest[]
+  quizQuestions  QuizQuestion[]
+
+  @@map("lessons")
+}
+
+model QuizQuestion {
+  id            String   @id @default(cuid())
+  question      String
+  options       String   // JSON string of options array
+  correctOption Int
+  order         Int      // To maintain question sequence
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lessonId String
+
+  @@map("quiz_questions")
+}
+
+model Progress {
+  id        String   @id @default(cuid())
+  completed Boolean  @default(false)
+  quizScore Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  course   Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId String
+  module   Module   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  moduleId String
+  lesson   Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lessonId String
+
+  @@unique([userId, courseId, moduleId, lessonId])
+  @@map("progress")
+}
+
+model UserProgress {
+  id           String   @id @default(cuid())
+  codeContent  String?  // Student's current code
+  lastSavedAt  DateTime?
+  isCompleted  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  course   Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId String
+  lesson   Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lessonId String
+
+  @@unique([userId, courseId, lessonId])
+  @@map("user_progress")
+}
+
+model ChallengeTest {
+  id           String   @id @default(cuid())
+  testContent  String   // Test file content
+  testFileName String   // Original test file name
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  lesson   Lesson @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lessonId String
+
+  @@map("challenge_tests")
+}
+
+model PasswordReset {
+  id        String   @id @default(cuid())
+  email     String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@map("password_resets")
+}
+
+// NextAuth.js required models
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+enum UserRole {
+  STUDENT
+  ADMIN
+}
+
+enum CourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum CourseAccess {
+  FREE
+  PAID
+}
+
+enum CourseStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
+enum LessonType {
+  INTRO
+  QUIZ
+  CHALLENGE
+}
+
+enum SubscriptionPlan {
+  FREE
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  INACTIVE
+  CANCELED
+  PAST_DUE
+  TRIALING
+}
+
+// Language Support Models
+model Language {
+  id          String   @id @default(cuid())
+  name        String   @unique // 'solidity', 'rust', 'go'
+  displayName String   // 'Solidity', 'Rust', 'Go'
+  compilerApp String   // 'blockchain-compiler', 'backend-compiler'
+  isActive    Boolean  @default(false) // Start with Solidity only
+  icon        String?  // Language icon path
+  color       String?  // Hex color for UI
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  configurations LanguageConfiguration[]
+  courseLanguages CourseLanguage[]
+
+  @@map("languages")
+}
+
+model LanguageConfiguration {
+  id            String   @id @default(cuid())
+  compiler      String   // 'forge', 'cargo', 'go'
+  version       String   // '0.8.30', '1.70.0', '1.21.0'
+  buildCommand  String?  // 'forge build --json', 'cargo build'
+  testCommand   String?  // 'forge test --json', 'cargo test'
+  lintCommand   String?  // 'forge fmt', 'cargo fmt'
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  language   Language @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  languageId String
+
+  @@unique([languageId, compiler])
+  @@map("language_configurations")
+}
+
+model CourseLanguage {
+  id         String   @id @default(cuid())
+  isPrimary  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  course     Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId   String
+  language   Language @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  languageId String
+
+  @@unique([courseId, languageId])
+  @@map("course_languages")
+}
+
+// Course Project Management Models
+model CourseProject {
+  id          String   @id @default(cuid())
+  projectPath String   // Path to the course project on Fly.io
+  foundryConfig Json?  // foundry.toml configuration as JSON
+  remappings   Json?   // remappings.txt as JSON
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId     String
+  dependencies CourseDependency[]
+  templates    CourseTemplate[]
+
+  @@unique([courseId])
+  @@map("course_projects")
+}
+
+model CourseDependency {
+  id          String   @id @default(cuid())
+  name        String   // Library name (e.g., 'forge-std', 'openzeppelin-contracts')
+  version     String?  // Specific version (optional)
+  source      String   // Source URL or path
+  isInstalled Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  courseProject CourseProject @relation(fields: [courseProjectId], references: [id], onDelete: Cascade)
+  courseProjectId String
+
+  @@unique([courseProjectId, name])
+  @@map("course_dependencies")
+}
+
+model CourseTemplate {
+  id          String   @id @default(cuid())
+  name        String   // Template name (e.g., 'basic', 'advanced', 'defi')
+  description String?  // Template description
+  templatePath String  // Path to template files
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  courseProject CourseProject @relation(fields: [courseProjectId], references: [id], onDelete: Cascade)
+  courseProjectId String
+
+  @@map("course_templates")
+}
+
+// Student Progress Management Models
+model StudentProgress {
+  id           String   @id @default(cuid())
+  codeContent  String?  // Student's current code
+  lastSavedAt  DateTime?
+  isCompleted  Boolean  @default(false)
+  completedAt  DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String
+  course       Course   @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  courseId     String
+  lesson       Lesson   @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  lessonId     String
+  compilationResults CompilationResult[]
+  testResults  TestResult[]
+  studentFiles StudentFile[]
+
+  @@unique([userId, courseId, lessonId])
+  @@map("student_progress")
+}
+
+model CompilationResult {
+  id          String   @id @default(cuid())
+  success     Boolean  // Whether compilation was successful
+  output      Json?    // Compilation output (ABI, bytecode, etc.)
+  errors      Json?    // Compilation errors
+  warnings    Json?    // Compilation warnings
+  compilationTime Int? // Compilation time in milliseconds
+  createdAt   DateTime @default(now())
+
+  // Relations
+  studentProgress StudentProgress @relation(fields: [studentProgressId], references: [id], onDelete: Cascade)
+  studentProgressId String
+
+  @@map("compilation_results")
+}
+
+model TestResult {
+  id          String   @id @default(cuid())
+  success     Boolean  // Whether tests passed
+  output      Json?    // Test output (results, coverage, etc.)
+  errors      Json?    // Test errors
+  testCount   Int?     // Number of tests run
+  passedCount Int?     // Number of tests passed
+  failedCount Int?     // Number of tests failed
+  testTime    Int?     // Test execution time in milliseconds
+  createdAt   DateTime @default(now())
+
+  // Relations
+  studentProgress StudentProgress @relation(fields: [studentProgressId], references: [id], onDelete: Cascade)
+  studentProgressId String
+
+  @@map("test_results")
+}
+
+model StudentFile {
+  id          String   @id @default(cuid())
+  fileName    String   // File name (e.g., 'MyContract.sol', 'test/MyContract.t.sol')
+  filePath    String   // Relative path within project
+  content     String   // File content
+  fileType    String   // 'contract', 'test', 'library', 'interface'
+  isMain      Boolean  @default(false) // Is this the main contract file?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  studentProgress StudentProgress @relation(fields: [studentProgressId], references: [id], onDelete: Cascade)
+  studentProgressId String
+
+  @@unique([studentProgressId, fileName])
+  @@map("student_files")
+}

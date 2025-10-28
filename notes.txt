@@ -1,0 +1,37 @@
+Upload image
+curl -X POST http://localhost:3002/api/upload/course-thumbnail \
+  -F "thumbnail=@/Users/gimer/Downloads/course1.png"
+
+
+
+Course Creation
+
+curl -X POST http://localhost:3002/api/courses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "courseId": "solidity-basics-105",
+    "title": "Solidity Basics 101",
+    "language": "Solidity",
+    "goals": "Learn the fundamentals of Solidity smart contract development",
+    "level": "BEGINNER",
+    "access": "FREE",
+    "thumbnail": "uploads/courses/course1-1761665802204.webp",
+    "creatorId": "admin-user-id",
+    "foundryConfig": {
+      "solc": "0.8.30",
+      "optimizer": true,
+      "optimizer_runs": 200,
+      "via_ir": false,
+      "evm_version": "london"
+    },
+    "dependencies": [
+      {
+        "name": "forge-std",
+        "version": "latest"
+      },
+      {
+        "name": "openzeppelin-contracts",
+        "version": "latest"
+      }
+    ]
+  }'

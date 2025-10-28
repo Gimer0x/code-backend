@@ -35,3 +35,29 @@ curl -X POST http://localhost:3002/api/courses \
       }
     ]
   }'
+
+  Module Creation:
+
+  curl -X POST http://localhost:3002/api/courses/solidity-basics-102/modules \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Introduction to Smart Contracts",
+    "description": "Learn the basics of smart contracts and how they work on the blockchain",
+    "order": 1,
+    "isPublished": true
+  }'
+
+  Module Id: cmhatbuhl000j9k5oqcf0vcoj
+
+
+  curl -X POST http://localhost:3002/api/modules/cmhatbuhl000j9k5oqcf0vcoj/lessons \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "INTRO",
+    "title": "What are Smart Contracts?",
+    "contentMarkdown": "# What are Smart Contracts?\n\n## Overview\n\nSmart contracts are **self-executing contracts** with the terms of the agreement directly written into code.\n\n## Key Characteristics\n\n- **Immutable**: Once deployed, the code cannot be changed\n- **Transparent**: All code and transactions are publicly visible\n- **Automated**: Execute automatically without human intervention",
+    "order": 1,
+    "initialCode": "// Your starting code here",
+    "solutionCode": "// Solution code here",
+    "tests": "// Test code here"
+  }'

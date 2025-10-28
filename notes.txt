@@ -1,6 +1,6 @@
 Upload image
 curl -X POST http://localhost:3002/api/upload/course-thumbnail \
-  -F "thumbnail=@/Users/gimer/Downloads/course1.png"
+  -F "thumbnail=@/Users/gimer/Downloads/course2.png"
 
 
 

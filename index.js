@@ -470,7 +470,7 @@ app.post('/api/courses', async (req, res) => {
       courseId,
       title,
       language,
-      goals,
+      goals: Array.isArray(goals) ? goals.join(', ') : goals,
       level,
       access,
       thumbnail,
@@ -489,6 +489,37 @@ app.post('/api/courses', async (req, res) => {
       console.log(`🔧 Creating directory: ${coursePath}`);
       await fs.mkdir(coursePath, { recursive: true });
       
+      // Initialize git repository first (required for forge init)
+      console.log(`🔧 Initializing git repository in: ${coursePath}`);
+      const gitInitResult = await new Promise((resolve, reject) => {
+        const git = spawn('git', ['init'], {
+          cwd: coursePath,
+          stdio: 'pipe'
+        });
+        
+        let stdout = '';
+        let stderr = '';
+        
+        git.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+        
+        git.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+        
+        git.on('close', (code) => {
+          console.log(`Git init completed with code: ${code}`);
+          if (stderr) console.log(`🔧 Git stderr: ${stderr}`);
+          resolve({ code, stdout, stderr });
+        });
+        
+        git.on('error', (error) => {
+          console.error(`🔧 Git error: ${error.message}`);
+          reject(error);
+        });
+      });
+
       // Initialize Foundry project
       console.log(`🔧 Initializing Foundry project in: ${coursePath}`);
       const initResult = await new Promise((resolve, reject) => {
@@ -523,6 +554,69 @@ app.post('/api/courses', async (req, res) => {
       // Create foundry.toml with custom configuration
       const foundryToml = generateFoundryToml(foundryConfig || {});
       await fs.writeFile(path.join(coursePath, 'foundry.toml'), foundryToml);
+      
+      // Install dependencies if provided
+      if (dependencies && dependencies.length > 0) {
+        console.log(`🔧 Installing dependencies: ${dependencies.map(d => d.name).join(', ')}`);
+        
+        // Map common dependency names to their GitHub URLs
+        const dependencyUrls = {
+          'openzeppelin-contracts': 'https://github.com/OpenZeppelin/openzeppelin-contracts',
+          'forge-std': 'https://github.com/foundry-rs/forge-std',
+          'ds-test': 'https://github.com/dapphub/ds-test',
+          'solmate': 'https://github.com/transmissions11/solmate',
+          'prb-math': 'https://github.com/PaulRBerg/prb-math'
+        };
+        
+        for (const dependency of dependencies) {
+          try {
+            const dependencyUrl = dependencyUrls[dependency.name] || dependency.url;
+            if (!dependencyUrl) {
+              console.warn(`⚠️ No URL found for dependency: ${dependency.name}`);
+              continue;
+            }
+            
+            const installResult = await new Promise((resolve, reject) => {
+              const args = ['install', dependencyUrl];
+              if (dependency.version && dependency.version !== 'latest') {
+                args.push('--tag', dependency.version);
+              }
+              
+              const forge = spawn('forge', args, {
+                cwd: coursePath,
+                stdio: 'pipe'
+              });
+              
+              let stdout = '';
+              let stderr = '';
+              
+              forge.stdout.on('data', (data) => {
+                stdout += data.toString();
+              });
+              
+              forge.stderr.on('data', (data) => {
+                stderr += data.toString();
+              });
+              
+              forge.on('close', (code) => {
+                resolve({ code, stdout, stderr });
+              });
+              
+              forge.on('error', (error) => {
+                reject(error);
+              });
+            });
+            
+            if (installResult.code === 0) {
+              console.log(`✅ Installed ${dependency.name}${dependency.version ? `@${dependency.version}` : ''}`);
+            } else {
+              console.warn(`⚠️ Failed to install ${dependency.name}: ${installResult.stderr}`);
+            }
+          } catch (depError) {
+            console.warn(`⚠️ Error installing ${dependency.name}:`, depError.message);
+          }
+        }
+      }
       
       console.log(`✅ Foundry project created at: ${coursePath}`);
       

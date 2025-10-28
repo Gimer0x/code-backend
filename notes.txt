@@ -9,7 +9,7 @@ Course Creation
 curl -X POST http://localhost:3002/api/courses \
   -H "Content-Type: application/json" \
   -d '{
-    "courseId": "solidity-basics-105",
+    "courseId": "solidity-basics-102",
     "title": "Solidity Basics 101",
     "language": "Solidity",
     "goals": "Learn the fundamentals of Solidity smart contract development",

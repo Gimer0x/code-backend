@@ -1,0 +1,9 @@
+[submodule "foundry-projects/course-test-openzeppelin-deps/lib/forge-std"]
+	path = foundry-projects/course-test-openzeppelin-deps/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "foundry-projects/course-test-openzeppelin-fixed/lib/forge-std"]
+	path = foundry-projects/course-test-openzeppelin-fixed/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "foundry-projects/course-test-openzeppelin-fixed/lib/openzeppelin-contracts"]
+	path = foundry-projects/course-test-openzeppelin-fixed/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts

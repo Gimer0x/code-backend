@@ -6,58 +6,67 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export class CompilationManager {
+/**
+ * Admin Compilation Manager
+ * Handles compilation for admin course projects only
+ */
+export class AdminCompilationManager {
   constructor() {
-    // Use local paths for development, Docker paths for production
     this.basePath = process.env.FOUNDRY_CACHE_DIR || path.join(__dirname, './foundry-projects');
-    this.studentSessionsPath = process.env.STUDENT_SESSIONS_DIR || path.join(__dirname, '../student-sessions');
   }
 
   /**
-   * Compile student code for a specific course and lesson
-   * @param {string} userId - User ID
+   * Compile code in a course project context
    * @param {string} courseId - Course ID
-   * @param {string} lessonId - Lesson ID
    * @param {string} code - Solidity code to compile
+   * @param {string} contractName - Contract name (optional)
    * @param {Object} options - Compilation options
    * @returns {Promise<Object>} Compilation result
    */
-  async compileStudentCode(userId, courseId, lessonId, code, options = {}) {
+  async compileCode(courseId, code, contractName = 'CompileContract', options = {}) {
     try {
-      const sessionId = `${userId}-${courseId}-${lessonId}`;
-      const sessionPath = path.join(this.studentSessionsPath, sessionId);
+      const courseProjectPath = path.join(this.basePath, `course-${courseId}`);
       
-      // Create session directory
-      await this.createSessionDirectory(sessionPath);
+      // Check if course project exists
+      try {
+        await fs.access(courseProjectPath);
+      } catch (error) {
+        throw new Error(`Course project not found: ${courseId}`);
+      }
+
+      // Create temporary compilation directory outside the course project
+      const tempCompileDir = path.join(this.basePath, '.temp-compile', `course-${courseId}-${Date.now()}`);
+      await fs.mkdir(tempCompileDir, { recursive: true });
       
-      // Write student code to file
-      const contractName = options.contractName || 'StudentContract';
-      const contractFile = path.join(sessionPath, 'src', `${contractName}.sol`);
-      await fs.writeFile(contractFile, code, 'utf8');
+      // Copy course project files to temp directory
+      await this.copyCourseProjectToTemp(courseProjectPath, tempCompileDir);
+
+      // Write the code to compile
+      const contractFileName = `${contractName}.sol`;
+      const contractPath = path.join(tempCompileDir, 'src', contractFileName);
+      await fs.writeFile(contractPath, code, 'utf8');
       
-      // Copy course project files to session
-      await this.copyCourseProjectToSession(courseId, sessionPath);
+      // Clean up test files to avoid conflicts
+      await this.cleanupTestFiles(tempCompileDir);
       
       // Compile the code
-      const compilationResult = await this.runCompilation(sessionPath, options);
+      const compilationResult = await this.runCompilation(tempCompileDir, options);
       
       // Parse compilation results
       const parsedResult = this.parseCompilationResult(compilationResult);
       
-      // Store compilation result
-      await this.storeCompilationResult(userId, courseId, lessonId, parsedResult);
-      
-      // Clean up session directory
-      await this.cleanupSession(sessionPath);
+      // Clean up temporary directory
+      await fs.rm(tempCompileDir, { recursive: true, force: true });
       
       return {
         success: parsedResult.success,
         result: parsedResult,
-        sessionId,
+        courseId,
+        contractName: contractFileName,
         timestamp: new Date().toISOString()
       };
     } catch (error) {
-      console.error('Error compiling student code:', error);
+      console.error('Admin compilation error:', error);
       return {
         success: false,
         error: error.message,
@@ -67,59 +76,47 @@ export class CompilationManager {
   }
 
   /**
-   * Create session directory structure
-   * @param {string} sessionPath - Session directory path
+   * Copy course project files to temporary directory
+   * @param {string} courseProjectPath - Course project path
+   * @param {string} tempDir - Temporary directory path
    */
-  async createSessionDirectory(sessionPath) {
-    const directories = [
-      sessionPath,
-      path.join(sessionPath, 'src'),
-      path.join(sessionPath, 'test'),
-      path.join(sessionPath, 'script'),
-      path.join(sessionPath, 'lib')
-    ];
-
-    for (const dir of directories) {
-      await fs.mkdir(dir, { recursive: true });
+  async copyCourseProjectToTemp(courseProjectPath, tempDir) {
+    try {
+      await fs.cp(courseProjectPath, tempDir, { 
+        recursive: true,
+        filter: (src) => !src.includes('.temp-compile') && !src.includes('.git')
+      });
+    } catch (error) {
+      console.error('Error copying course project:', error);
+      throw error;
     }
   }
 
   /**
-   * Copy course project files to session
-   * @param {string} courseId - Course ID
-   * @param {string} sessionPath - Session directory path
+   * Clean up test files to avoid conflicts
+   * @param {string} tempDir - Temporary directory path
    */
-  async copyCourseProjectToSession(courseId, sessionPath) {
-    const courseProjectPath = path.join(this.basePath, `course-${courseId}`);
-    
+  async cleanupTestFiles(tempDir) {
     try {
-      // Copy foundry.toml
-      const foundryToml = path.join(courseProjectPath, 'foundry.toml');
-      const sessionFoundryToml = path.join(sessionPath, 'foundry.toml');
-      await fs.copyFile(foundryToml, sessionFoundryToml);
-      
-      // Copy remappings.txt
-      const remappings = path.join(courseProjectPath, 'remappings.txt');
-      const sessionRemappings = path.join(sessionPath, 'remappings.txt');
-      await fs.copyFile(remappings, sessionRemappings);
-      
-      // Copy lib directory
-      const libSource = path.join(courseProjectPath, 'lib');
-      const libDest = path.join(sessionPath, 'lib');
-      await this.copyDirectory(libSource, libDest);
+      const testDir = path.join(tempDir, 'test');
+      const testFiles = await fs.readdir(testDir);
+      for (const file of testFiles) {
+        if (file.endsWith('.t.sol')) {
+          await fs.unlink(path.join(testDir, file));
+        }
+      }
     } catch (error) {
-      console.error('Error copying course project to session:', error);
-      // Continue with compilation even if copying fails
+      // Test directory might not exist, continue
     }
   }
 
   /**
    * Run Foundry compilation
-   * @param {string} sessionPath - Session directory path
+   * @param {string} tempDir - Temporary directory path
    * @param {Object} options - Compilation options
    * @returns {Promise<Object>} Compilation result
    */
-  async runCompilation(sessionPath, options = {}) {
+  async runCompilation(tempDir, options = {}) {
     return new Promise((resolve, reject) => {
       const args = ['build'];
       if (options.verbose) {
@@ -130,7 +127,7 @@ export class CompilationManager {
       }
 
       const process = spawn('forge', args, {
-        cwd: sessionPath,
+        cwd: tempDir,
         stdio: 'pipe'
       });
 
@@ -192,11 +189,8 @@ export class CompilationManager {
    * @returns {Object} Parsed output
    */
   parseSuccessfulOutput(stdout) {
-    // Extract compilation artifacts
-    const artifacts = this.extractArtifacts(stdout);
-    
     return {
-      artifacts,
+      artifacts: this.extractArtifacts(stdout),
       compilationTime: this.extractCompilationTime(stdout),
       contracts: this.extractContractInfo(stdout)
     };
@@ -272,7 +266,7 @@ export class CompilationManager {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      if (line.includes('Error:')) {
+      if (line.includes('Error:') || line.includes('error:')) {
         const error = {
           type: 'compilation_error',
           message: line.replace('Error:', '').trim(),
@@ -303,7 +297,7 @@ export class CompilationManager {
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      if (line.includes('Warning:')) {
+      if (line.includes('Warning:') || line.includes('warning:')) {
         const warning = {
           type: 'compilation_warning',
           message: line.replace('Warning:', '').trim(),
@@ -315,92 +309,5 @@ export class CompilationManager {
     }
     
     return warnings;
-  }
-
-  /**
-   * Store compilation result in database
-   * @param {string} userId - User ID
-   * @param {string} courseId - Course ID
-   * @param {string} lessonId - Lesson ID
-   * @param {Object} result - Compilation result
-   */
-  async storeCompilationResult(userId, courseId, lessonId, result) {
-    // This would typically store in a database
-    // For now, we'll just log the result
-    console.log('Storing compilation result:', {
-      userId,
-      courseId,
-      lessonId,
-      result
-    });
-    
-    // In a real implementation, this would:
-    // 1. Connect to the database
-    // 2. Store the compilation result
-    // 3. Update student progress
-    // 4. Return the stored result ID
-  }
-
-  /**
-   * Clean up session directory
-   * @param {string} sessionPath - Session directory path
-   */
-  async cleanupSession(sessionPath) {
-    try {
-      await fs.rm(sessionPath, { recursive: true, force: true });
-    } catch (error) {
-      console.error('Error cleaning up session:', error);
-    }
-  }
-
-  /**
-   * Copy directory recursively
-   * @param {string} src - Source directory
-   * @param {string} dest - Destination directory
-   */
-  async copyDirectory(src, dest) {
-    try {
-      const entries = await fs.readdir(src, { withFileTypes: true });
-      
-      for (const entry of entries) {
-        const srcPath = path.join(src, entry.name);
-        const destPath = path.join(dest, entry.name);
-        
-        if (entry.isDirectory()) {
-          await fs.mkdir(destPath, { recursive: true });
-          await this.copyDirectory(srcPath, destPath);
-        } else {
-          await fs.copyFile(srcPath, destPath);
-        }
-      }
-    } catch (error) {
-      console.error(`Failed to copy directory ${src} to ${dest}:`, error);
-    }
-  }
-
-  /**
-   * Get compilation history for a student
-   * @param {string} userId - User ID
-   * @param {string} courseId - Course ID
-   * @param {string} lessonId - Lesson ID
-   * @returns {Promise<Array>} Compilation history
-   */
-  async getCompilationHistory(userId, courseId, lessonId) {
-    // This would typically query the database
-    // For now, return empty array
-    return [];
-  }
-
-  /**
-   * Get latest compilation result for a student
-   * @param {string} userId - User ID
-   * @param {string} courseId - Course ID
-   * @param {string} lessonId - Lesson ID
-   * @returns {Promise<Object|null>} Latest compilation result
-   */
-  async getLatestCompilationResult(userId, courseId, lessonId) {
-    // This would typically query the database
-    // For now, return null
-    return null;
   }
 }

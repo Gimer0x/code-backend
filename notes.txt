@@ -9,12 +9,12 @@ Course Creation
 curl -X POST http://localhost:3002/api/courses \
   -H "Content-Type: application/json" \
   -d '{
-    "courseId": "solidity-basics-102",
-    "title": "Solidity Basics 101",
+    "courseId": "solidity-security",
+    "title": "Solidity Security",
     "language": "Solidity",
-    "goals": "Learn the fundamentals of Solidity smart contract development",
+    "goals": "Learn the fundamentals of smart contract security",
     "level": "BEGINNER",
-    "access": "FREE",
+    "access": "PAID",
     "thumbnail": "uploads/courses/course1-1761665802204.webp",
     "creatorId": "admin-user-id",
     "foundryConfig": {

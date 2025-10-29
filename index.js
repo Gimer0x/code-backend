@@ -9,13 +9,13 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
-import { StudentWorkspaceManager } from './src/studentWorkspaceManager.js';
 import { uploadSingleImage, processImage } from './src/imageUpload.js';
 import { CourseService } from './src/courseService.js';
 import { ModuleService } from './src/moduleService.js';
 import { LessonService } from './src/lessonService.js';
 import { AuthService } from './src/authService.js';
 import { AuthMiddleware } from './src/authMiddleware.js';
+import { AdminCompilationManager } from './src/adminCompilationManager.js';
 
 // Load environment variables
 dotenv.config();
@@ -23,70 +23,6 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Test output parsing function
-function parseTestOutput(output) {
-  const results = [];
-  const lines = output.split('\n');
-  
-  for (const line of lines) {
-    // Look for test results like: [PASS] testInitialCountIsZero() (gas: 7628)
-    const passMatch = line.match(/\[PASS\]\s+(\w+)\(\)\s+\(gas:\s+(\d+)\)/);
-    const failMatch = line.match(/\[FAIL\]\s+(\w+)\(\)/);
-    
-    if (passMatch) {
-      results.push({
-        name: passMatch[1],
-        status: 'pass',
-        message: `Test passed`,
-        gasUsed: parseInt(passMatch[2])
-      });
-    } else if (failMatch) {
-      results.push({
-        name: failMatch[1],
-        status: 'fail',
-        message: `Test failed`,
-        gasUsed: 0
-      });
-    }
-  }
-  
-  // If no results found but output contains test information, try alternative parsing
-  if (results.length === 0 && output.includes('test')) {
-    // Look for patterns like "testInitialZero()" in the output
-    const testMatches = output.match(/test\w+\(\)/g);
-    if (testMatches) {
-      testMatches.forEach(testName => {
-        const isPassed = output.includes(`[PASS] ${testName}`) || output.includes('Suite result: ok');
-        results.push({
-          name: testName,
-          status: isPassed ? 'pass' : 'fail',
-          message: isPassed ? 'Test passed' : 'Test failed',
-          gasUsed: 0
-        });
-      });
-    }
-  }
-  
-  // If still no results, try to extract from the actual test output format
-  if (results.length === 0 && output.includes('[PASS]')) {
-    const passMatches = output.match(/\[PASS\]\s+(\w+)\(\)\s+\(gas:\s+(\d+)\)/g);
-    if (passMatches) {
-      passMatches.forEach(match => {
-        const testMatch = match.match(/\[PASS\]\s+(\w+)\(\)\s+\(gas:\s+(\d+)\)/);
-        if (testMatch) {
-          results.push({
-            name: testMatch[1],
-            status: 'pass',
-            message: 'Test passed',
-            gasUsed: parseInt(testMatch[2])
-          });
-        }
-      });
-    }
-  }
-  
-  return results;
-}
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -103,9 +39,8 @@ const prisma = new PrismaClient();
 const courseService = new CourseService();
 const moduleService = new ModuleService();
 const lessonService = new LessonService();
+const adminCompilationManager = new AdminCompilationManager();
 
-// Initialize workspace manager
-const workspaceManager = new StudentWorkspaceManager();
 
 // Middleware
 app.use(helmet());
@@ -248,167 +183,41 @@ app.post('/api/admin/create-admin', async (req, res) => {
   }
 });
 
-// Compilation endpoint
-app.post('/api/compile', async (req, res) => {
+// Admin-only compilation endpoint
+app.post('/api/compile', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
-    const { userId, courseId, lessonId, code, contractName } = req.body;
+    const { courseId, code, contractName } = req.body;
 
-    if (!userId || !courseId || !lessonId || !code) {
+    if (!courseId || !code) {
       return res.status(400).json({
         success: false,
-        error: 'userId, courseId, lessonId, and code are required'
+        error: 'courseId and code are required'
       });
     }
 
-    console.log(`🔧 Compiling code for user ${userId}, course ${courseId}, lesson ${lessonId}`);
-    
-    // Get or create student workspace
-    const workspacePath = await workspaceManager.getOrCreateStudentWorkspace(userId, courseId);
-    const isAnonymous = workspaceManager.isAnonymousUser(userId);
-    
-    // Save lesson code to workspace
-    await workspaceManager.saveLessonCode(workspacePath, lessonId, code, contractName || 'StudentContract');
-    
-    // Create temporary session for compilation
-    const sessionId = `compile-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const sessionPath = await workspaceManager.createTempSession(workspacePath, sessionId);
-    
-    // Clean up ALL test files to avoid conflicts with student code
-    try {
-      const testDir = path.join(sessionPath, 'test');
-      const testFiles = await fs.readdir(testDir);
-      for (const file of testFiles) {
-        if (file.endsWith('.t.sol')) {
-          await fs.unlink(path.join(testDir, file));
-          console.log(`🧹 Removed test file: ${file}`);
-        }
-      }
-    } catch (error) {
-      console.log(`⚠️ Could not clean test files: ${error.message}`);
+    console.log(`🔧 Admin compiling code for course ${courseId}`);
+
+    // Use AdminCompilationManager to compile the code
+    const result = await adminCompilationManager.compileCode(courseId, code, contractName);
+
+    if (!result.success) {
+      return res.status(400).json({
+        success: false,
+        error: result.error,
+        message: 'Compilation failed'
+      });
     }
-    
-    // Run compilation
-    const result = await new Promise((resolve, reject) => {
-      const process = spawn('forge', ['build'], {
-        cwd: sessionPath,
-        stdio: 'pipe'
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      process.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      process.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      process.on('close', (code) => {
-        resolve({
-          success: code === 0,
-          exitCode: code,
-          stdout,
-          stderr
-        });
-      });
-
-      process.on('error', (error) => {
-        reject(error);
-      });
-    });
-
-    // Clean up temporary session
-    await workspaceManager.cleanupTempSession(sessionPath);
-
-    // Parse errors and warnings from both stdout and stderr
-    const errors = [];
-    const warnings = [];
-    
-    // Parse stderr for errors and warnings
-    if (result.stderr) {
-      const stderrLines = result.stderr.split('\n');
-      for (const line of stderrLines) {
-        if (line.includes('Error:') || line.includes('error:')) {
-          // Extract error details
-          const errorMatch = line.match(/Error:\s*(.+)/i);
-          if (errorMatch) {
-            errors.push({
-              type: 'compilation_error',
-              message: errorMatch[1].trim(),
-              severity: 'error',
-              sourceLocation: {
-                file: 'src/Counter.sol',
-                start: { line: 1, column: 1 }
-              }
-            });
-          }
-        } else if (line.includes('Warning:') || line.includes('warning:')) {
-          const warningMatch = line.match(/Warning:\s*(.+)/i);
-          if (warningMatch) {
-            warnings.push({
-              type: 'compilation_warning',
-              message: warningMatch[1].trim(),
-              severity: 'warning',
-              sourceLocation: {
-                file: 'src/Counter.sol',
-                start: { line: 1, column: 1 }
-              }
-            });
-          }
-        }
-      }
-    }
-    
-    // Parse stdout for warnings (Foundry outputs warnings to stdout)
-    if (result.stdout) {
-      const stdoutLines = result.stdout.split('\n');
-      for (const line of stdoutLines) {
-        if (line.includes('Warning (') || line.includes('Warning:')) {
-          const warningMatch = line.match(/Warning\s*\([^)]*\):\s*(.+)/i) || line.match(/Warning:\s*(.+)/i);
-          if (warningMatch) {
-            warnings.push({
-              type: 'compilation_warning',
-              message: warningMatch[1].trim(),
-              severity: 'warning',
-              sourceLocation: {
-                file: 'src/Counter.sol',
-                start: { line: 1, column: 1 }
-              }
-            });
-          }
-        }
-      }
-    }
-
-    // Clean up ephemeral workspace immediately after compilation for all users
-    await workspaceManager.cleanupEphemeralWorkspace(workspacePath);
 
     res.json({
       success: result.success,
-      result: {
-        success: result.success,
-        output: { artifacts: [], compilationTime: null, contracts: [] },
-        warnings: warnings,
-        errors: result.success ? errors : [...errors, { 
-          type: 'compilation_error', 
-          message: result.stderr || 'Unknown compilation error',
-          severity: 'error',
-          sourceLocation: {
-            file: 'src/Counter.sol',
-            start: { line: 1, column: 1 }
-          }
-        }],
-        timestamp: new Date().toISOString()
-      },
-      workspaceId: `${userId}-${courseId}`,
-      sessionId,
-      timestamp: new Date().toISOString()
+      result: result.result,
+      courseId: result.courseId,
+      contractName: result.contractName,
+      timestamp: result.timestamp
     });
 
   } catch (error) {
-    console.error('Compilation error:', error);
+    console.error('Admin compilation error:', error);
     res.status(500).json({
       success: false,
       error: error.message,
@@ -417,161 +226,6 @@ app.post('/api/compile', async (req, res) => {
   }
 });
 
-// Testing endpoint
-app.post('/api/test', async (req, res) => {
-  const requestId = `foundry-test-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-  console.log(`[${requestId}] Starting test request`)
-  
-  try {
-    const { userId, courseId, lessonId, code, testCode, contractName, testName } = req.body;
-    console.log(`[${requestId}] Received test request:`, {
-      userId,
-      courseId,
-      lessonId,
-      contractName,
-      testName,
-      codeLength: code?.length || 0,
-      testCodeLength: testCode?.length || 0
-    })
-
-    if (!userId || !courseId || !lessonId || !code || !testCode) {
-      console.log(`[${requestId}] Missing required parameters`)
-      return res.status(400).json({
-        success: false,
-        error: 'userId, courseId, lessonId, code, and testCode are required'
-      });
-    }
-
-    console.log(`[${requestId}] Testing code for user ${userId}, course ${courseId}, lesson ${lessonId}`);
-    
-    // Get or create student workspace
-    const workspacePath = await workspaceManager.getOrCreateStudentWorkspace(userId, courseId);
-    const isAnonymous = workspaceManager.isAnonymousUser(userId);
-    console.log(`[${requestId}] Workspace: ${workspacePath}, Anonymous: ${isAnonymous}`)
-    
-    // Save lesson code to workspace
-    await workspaceManager.saveLessonCode(workspacePath, lessonId, code, contractName || 'StudentContract');
-    console.log(`[${requestId}] Saved lesson code to workspace`)
-    
-    // Create temporary session for testing
-    const sessionId = `test-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const sessionPath = await workspaceManager.createTempSession(workspacePath, sessionId);
-    console.log(`[${requestId}] Created temporary session: ${sessionId}`)
-    
-    // Clean up existing test files to avoid conflicts
-    try {
-      const testDir = path.join(sessionPath, 'test');
-      const existingTests = await fs.readdir(testDir);
-      for (const testFile of existingTests) {
-        if (testFile.endsWith('.t.sol')) {
-          await fs.unlink(path.join(testDir, testFile));
-        }
-      }
-    } catch (error) {
-      console.log('No existing test files to clean up');
-    }
-    
-    // Write test code to session
-    const testFile = path.join(sessionPath, 'test', `${testName || 'StudentContractTest'}.t.sol`);
-    await fs.writeFile(testFile, testCode, 'utf8');
-    console.log(`[${requestId}] Written test file: ${testFile}`)
-    
-    // Run tests
-    console.log(`[${requestId}] Running forge test in: ${sessionPath}`)
-    const result = await new Promise((resolve, reject) => {
-      const process = spawn('forge', ['test'], {
-        cwd: sessionPath,
-        stdio: 'pipe'
-      });
-
-      let stdout = '';
-      let stderr = '';
-
-      process.stdout.on('data', (data) => {
-        stdout += data.toString();
-      });
-
-      process.stderr.on('data', (data) => {
-        stderr += data.toString();
-      });
-
-      process.on('close', (code) => {
-        console.log(`[${requestId}] Forge test completed with exit code: ${code}`)
-        console.log(`[${requestId}] stdout length: ${stdout.length}, stderr length: ${stderr.length}`)
-        resolve({
-          success: code === 0,
-          exitCode: code,
-          stdout,
-          stderr
-        });
-      });
-
-      process.on('error', (error) => {
-        reject(error);
-      });
-    });
-
-    // Clean up temporary session
-    await workspaceManager.cleanupTempSession(sessionPath);
-    console.log(`[${requestId}] Cleaned up temporary session`)
-
-    // Clean up ephemeral workspace immediately after testing for all users
-    await workspaceManager.cleanupEphemeralWorkspace(workspacePath);
-    console.log(`[${requestId}] Cleaned up ephemeral workspace`)
-
-    // Log the raw output for debugging
-    console.log(`[${requestId}] Raw forge test output:`, result.stdout)
-    
-    // Parse test output to extract structured results
-    const parsedResults = parseTestOutput(result.stdout);
-    const testCount = parsedResults.length;
-    const passedCount = parsedResults.filter(r => r.status === 'pass').length;
-    const failedCount = parsedResults.filter(r => r.status === 'fail').length;
-    
-    console.log(`[${requestId}] Parsed test results:`, {
-      testCount,
-      passedCount,
-      failedCount,
-      results: parsedResults.map(r => ({ name: r.name, status: r.status, gasUsed: r.gasUsed }))
-    })
-
-    console.log(`[${requestId}] Sending response:`, {
-      success: result.success,
-      outputLength: result.stdout.length,
-      hasErrors: !result.success,
-      errorLength: result.stderr.length,
-      parsedTestCount: testCount
-    })
-
-    res.json({
-      success: result.success,
-      message: result.success ? 'Tests completed' : 'Tests failed',
-      testResults: parsedResults,
-      testCount,
-      passedCount,
-      failedCount,
-      testTime: 0, // Could be extracted from output if needed
-      result: {
-        success: result.success,
-        output: result.stdout,
-        errors: result.success ? [] : [{ type: 'test_error', message: result.stderr || 'Unknown error', line: 1 }],
-        warnings: [],
-        timestamp: new Date().toISOString()
-      },
-      workspaceId: `${userId}-${courseId}`,
-      sessionId,
-      timestamp: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error(`[${requestId}] Test error:`, error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      message: 'Failed to run tests'
-    });
-  }
-});
 
 // Course management endpoints
 app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
@@ -878,91 +532,6 @@ function generateFoundryToml(config) {
   return toml;
 }
 
-// Workspace management endpoints
-app.get('/api/workspaces/:userId/:courseId', async (req, res) => {
-  try {
-    const { userId, courseId } = req.params;
-    const workspacePath = await workspaceManager.getOrCreateStudentWorkspace(userId, courseId);
-    const status = await workspaceManager.getWorkspaceStatus(workspacePath);
-    
-    res.json({
-      success: true,
-      workspace: {
-        id: `${userId}-${courseId}`,
-        path: workspacePath,
-        status
-      }
-    });
-  } catch (error) {
-    console.error('Workspace status error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Get lesson code from workspace
-app.get('/api/workspaces/:userId/:courseId/lessons/:lessonId', async (req, res) => {
-  try {
-    const { userId, courseId, lessonId } = req.params;
-    const workspacePath = await workspaceManager.getOrCreateStudentWorkspace(userId, courseId);
-    const code = await workspaceManager.loadLessonCode(workspacePath, lessonId);
-    
-    res.json({
-      success: true,
-      lesson: {
-        id: lessonId,
-        code,
-        workspaceId: `${userId}-${courseId}`
-      }
-    });
-  } catch (error) {
-    console.error('Load lesson code error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// List all student workspaces
-app.get('/api/workspaces', async (req, res) => {
-  try {
-    const workspaces = await workspaceManager.listStudentWorkspaces();
-    
-    res.json({
-      success: true,
-      workspaces,
-      total: workspaces.length
-    });
-  } catch (error) {
-    console.error('List workspaces error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Clean up old workspaces (maintenance endpoint)
-app.post('/api/workspaces/cleanup', async (req, res) => {
-  try {
-    const { daysOld = 30 } = req.body;
-    await workspaceManager.cleanupOldWorkspaces(daysOld);
-    
-    res.json({
-      success: true,
-      message: `Cleaned up workspaces older than ${daysOld} days`
-    });
-  } catch (error) {
-    console.error('Cleanup workspaces error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
 
 // Image upload endpoints
 app.post('/api/upload/course-thumbnail', uploadSingleImage, async (req, res) => {

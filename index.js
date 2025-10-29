@@ -14,6 +14,8 @@ import { uploadSingleImage, processImage } from './src/imageUpload.js';
 import { CourseService } from './src/courseService.js';
 import { ModuleService } from './src/moduleService.js';
 import { LessonService } from './src/lessonService.js';
+import { AuthService } from './src/authService.js';
+import { AuthMiddleware } from './src/authMiddleware.js';
 
 // Load environment variables
 dotenv.config();
@@ -128,6 +130,122 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: '1.0.0'
   });
+});
+
+// Authentication endpoints
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const result = await AuthService.register(req.body);
+    
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Registration failed',
+      code: 'REGISTRATION_FAILED'
+    });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const result = await AuthService.login(req.body);
+    
+    if (!result.success) {
+      return res.status(401).json(result);
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Login failed',
+      code: 'LOGIN_FAILED'
+    });
+  }
+});
+
+app.post('/api/auth/refresh', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+    const result = await AuthService.refreshToken(refreshToken);
+    
+    if (!result.success) {
+      return res.status(401).json(result);
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Token refresh failed',
+      code: 'REFRESH_FAILED'
+    });
+  }
+});
+
+app.get('/api/auth/profile', AuthMiddleware.authenticateToken, async (req, res) => {
+  try {
+    const result = await AuthService.getUserProfile(req.user.id);
+    res.json(result);
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to get profile',
+      code: 'PROFILE_FAILED'
+    });
+  }
+});
+
+app.put('/api/auth/profile', AuthMiddleware.authenticateToken, async (req, res) => {
+  try {
+    const result = await AuthService.updateProfile(req.user.id, req.body);
+    res.json(result);
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update profile',
+      code: 'UPDATE_FAILED'
+    });
+  }
+});
+
+app.post('/api/auth/change-password', AuthMiddleware.authenticateToken, async (req, res) => {
+  try {
+    const result = await AuthService.changePassword(req.user.id, req.body);
+    res.json(result);
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to change password',
+      code: 'CHANGE_PASSWORD_FAILED'
+    });
+  }
+});
+
+// Admin-only endpoints
+app.post('/api/admin/create-admin', async (req, res) => {
+  try {
+    const result = await AuthService.createAdminUser(req.body);
+    res.json(result);
+  } catch (error) {
+    console.error('Create admin error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create admin user',
+      code: 'CREATE_ADMIN_FAILED'
+    });
+  }
 });
 
 // Compilation endpoint
@@ -456,7 +574,7 @@ app.post('/api/test', async (req, res) => {
 });
 
 // Course management endpoints
-app.post('/api/courses', async (req, res) => {
+app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { courseId, title, language, goals, level, access, thumbnail, foundryConfig, dependencies, templates, creatorId } = req.body;
     
@@ -686,7 +804,7 @@ app.get('/api/courses', async (req, res) => {
 });
 
 // Update course
-app.put('/api/courses/:courseId', async (req, res) => {
+app.put('/api/courses/:courseId', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { courseId } = req.params;
     const updateData = req.body;
@@ -709,7 +827,7 @@ app.put('/api/courses/:courseId', async (req, res) => {
 });
 
 // Delete course
-app.delete('/api/courses/:courseId', async (req, res) => {
+app.delete('/api/courses/:courseId', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { courseId } = req.params;
     const result = await courseService.deleteCourse(courseId);
@@ -880,7 +998,7 @@ app.post('/api/upload/course-thumbnail', uploadSingleImage, async (req, res) => 
 });
 
 // Module management endpoints
-app.post('/api/courses/:courseId/modules', async (req, res) => {
+app.post('/api/courses/:courseId/modules', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { courseId } = req.params;
     const moduleData = { ...req.body, courseId };
@@ -938,7 +1056,7 @@ app.get('/api/modules/:moduleId', async (req, res) => {
   }
 });
 
-app.put('/api/modules/:moduleId', async (req, res) => {
+app.put('/api/modules/:moduleId', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const updateData = req.body;
@@ -960,7 +1078,7 @@ app.put('/api/modules/:moduleId', async (req, res) => {
   }
 });
 
-app.delete('/api/modules/:moduleId', async (req, res) => {
+app.delete('/api/modules/:moduleId', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const result = await moduleService.deleteModule(moduleId);
@@ -981,7 +1099,7 @@ app.delete('/api/modules/:moduleId', async (req, res) => {
 });
 
 // Lesson management endpoints
-app.post('/api/modules/:moduleId/lessons', async (req, res) => {
+app.post('/api/modules/:moduleId/lessons', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { moduleId } = req.params;
     const lessonData = { ...req.body, moduleId };
@@ -1039,7 +1157,7 @@ app.get('/api/lessons/:lessonId', async (req, res) => {
   }
 });
 
-app.put('/api/lessons/:lessonId', async (req, res) => {
+app.put('/api/lessons/:lessonId', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { lessonId } = req.params;
     const updateData = req.body;
@@ -1061,7 +1179,7 @@ app.put('/api/lessons/:lessonId', async (req, res) => {
   }
 });
 
-app.delete('/api/lessons/:lessonId', async (req, res) => {
+app.delete('/api/lessons/:lessonId', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { lessonId } = req.params;
     const result = await lessonService.deleteLesson(lessonId);
@@ -1082,7 +1200,7 @@ app.delete('/api/lessons/:lessonId', async (req, res) => {
 });
 
 // Challenge test management
-app.post('/api/lessons/:lessonId/challenge-tests', async (req, res) => {
+app.post('/api/lessons/:lessonId/challenge-tests', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { lessonId } = req.params;
     const testData = { ...req.body, lessonId };
@@ -1105,7 +1223,7 @@ app.post('/api/lessons/:lessonId/challenge-tests', async (req, res) => {
 });
 
 // Quiz question management
-app.post('/api/lessons/:lessonId/quiz-questions', async (req, res) => {
+app.post('/api/lessons/:lessonId/quiz-questions', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
     const { lessonId } = req.params;
     const questionData = { ...req.body, lessonId };

@@ -200,14 +200,7 @@ app.post('/api/compile', AuthMiddleware.authenticateToken, AuthMiddleware.requir
     // Use AdminCompilationManager to compile the code
     const result = await adminCompilationManager.compileCode(courseId, code, contractName);
 
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        error: result.error,
-        message: 'Compilation failed'
-      });
-    }
-
+    // Always return the full result, whether successful or not
     res.json({
       success: result.success,
       result: result.result,

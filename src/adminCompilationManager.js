@@ -118,7 +118,7 @@ export class AdminCompilationManager {
    */
   async runCompilation(tempDir, options = {}) {
     return new Promise((resolve, reject) => {
-      const args = ['build'];
+      const args = ['build', '--force'];
       if (options.verbose) {
         args.push('--verbose');
       }
@@ -166,18 +166,36 @@ export class AdminCompilationManager {
   parseCompilationResult(result) {
     const { success, stdout, stderr } = result;
     
+    // Parse errors from both stdout and stderr
+    const allErrors = [
+      ...this.parseErrors(stdout),
+      ...this.parseErrors(stderr)
+    ];
+    
+    // Parse warnings from both stdout and stderr
+    const allWarnings = [
+      ...this.parseWarnings(stdout),
+      ...this.parseWarnings(stderr)
+    ];
+    
+    // Deduplicate errors based on file, line, column, and message
+    const errors = this.deduplicateErrors(allErrors);
+    
+    // Deduplicate warnings based on file, line, column, and message
+    const warnings = this.deduplicateWarnings(allWarnings);
+    
     if (success) {
       return {
         success: true,
         output: this.parseSuccessfulOutput(stdout),
-        warnings: this.parseWarnings(stderr),
+        warnings: warnings,
         timestamp: new Date().toISOString()
       };
     } else {
       return {
         success: false,
-        errors: this.parseErrors(stderr),
-        warnings: this.parseWarnings(stderr),
+        errors: errors,
+        warnings: warnings,
         timestamp: new Date().toISOString()
       };
     }
@@ -256,29 +274,105 @@ export class AdminCompilationManager {
 
   /**
    * Parse compilation errors
-   * @param {string} stderr - Standard error output
+   * @param {string} output - Standard output or error output
    * @returns {Array} List of errors
    */
-  parseErrors(stderr) {
+  parseErrors(output) {
     const errors = [];
-    const lines = stderr.split('\n');
+    const lines = output.split('\n');
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      if (line.includes('Error:') || line.includes('error:')) {
+      // Match Solidity error format: "Error (1234): Error message"
+      const errorMatch = line.match(/Error\s*\((\d+)\):\s*(.+)/);
+      if (errorMatch) {
         const error = {
           type: 'compilation_error',
-          message: line.replace('Error:', '').trim(),
-          line: i + 1
+          code: errorMatch[1],
+          message: errorMatch[2].trim(),
+          line: i + 1,
+          severity: 'error'
         };
         
-        // Try to extract more details from next lines
-        if (i + 1 < lines.length && lines[i + 1].includes('-->')) {
-          error.location = lines[i + 1].trim();
+        // Look ahead for file location in next lines
+        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+          const nextLine = lines[j];
+          if (nextLine.includes('-->') && nextLine.includes('.sol:')) {
+            const locationMatch = nextLine.match(/-->\s*(.+\.sol):(\d+):(\d+)/);
+            if (locationMatch) {
+              error.file = locationMatch[1];
+              error.line = parseInt(locationMatch[2]);
+              error.column = parseInt(locationMatch[3]);
+              break;
+            }
+          }
         }
         
         errors.push(error);
+        continue;
+      }
+      
+      // Match Solidity error format: "Error: Compiler run failed:" followed by detailed errors
+      if (line.includes('Error: Compiler run failed:')) {
+        // This is a general error message, look for specific errors in following lines
+        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+          const nextLine = lines[j];
+          const specificErrorMatch = nextLine.match(/Error\s*\((\d+)\):\s*(.+)/);
+          if (specificErrorMatch) {
+            const error = {
+              type: 'compilation_error',
+              code: specificErrorMatch[1],
+              message: specificErrorMatch[2].trim(),
+              line: j + 1,
+              severity: 'error'
+            };
+            
+            // Look for file location in next lines
+            for (let k = j + 1; k < Math.min(j + 5, lines.length); k++) {
+              const locationLine = lines[k];
+              if (locationLine.includes('-->') && locationLine.includes('.sol:')) {
+                const locationMatch = locationLine.match(/-->\s*(.+\.sol):(\d+):(\d+)/);
+                if (locationMatch) {
+                  error.file = locationMatch[1];
+                  error.line = parseInt(locationMatch[2]);
+                  error.column = parseInt(locationMatch[3]);
+                  break;
+                }
+              }
+            }
+            
+            errors.push(error);
+          }
+        }
+        continue;
+      }
+      
+      // Match simple error format: "Error: ..."
+      if (line.includes('Error:') || line.includes('error:')) {
+        const error = {
+          type: 'compilation_error',
+          message: line.replace(/Error:\s*/i, '').trim(),
+          line: i + 1,
+          severity: 'error'
+        };
+        
+        // Look ahead for file location
+        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+          const nextLine = lines[j];
+          if (nextLine.includes('-->') && nextLine.includes('.sol:')) {
+            const locationMatch = nextLine.match(/-->\s*(.+\.sol):(\d+):(\d+)/);
+            if (locationMatch) {
+              error.file = locationMatch[1];
+              error.line = parseInt(locationMatch[2]);
+              error.column = parseInt(locationMatch[3]);
+              break;
+            }
+          }
+        }
+        
+        errors.push(error);
+        continue;
       }
     }
     
@@ -287,27 +381,91 @@ export class AdminCompilationManager {
 
   /**
    * Parse compilation warnings
-   * @param {string} stderr - Standard error output
+   * @param {string} output - Standard output or error output
    * @returns {Array} List of warnings
    */
-  parseWarnings(stderr) {
+  parseWarnings(output) {
     const warnings = [];
-    const lines = stderr.split('\n');
+    const lines = output.split('\n');
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      if (line.includes('Warning:') || line.includes('warning:')) {
+      // Match Solidity warning format: "Warning (5667): Unused function parameter..."
+      const warningMatch = line.match(/Warning\s*\((\d+)\):\s*(.+)/);
+      if (warningMatch) {
         const warning = {
           type: 'compilation_warning',
-          message: line.replace('Warning:', '').trim(),
-          line: i + 1
+          code: warningMatch[1],
+          message: warningMatch[2].trim(),
+          line: i + 1,
+          severity: 'warning'
         };
         
+        // Look ahead for file location in next lines
+        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+          const nextLine = lines[j];
+          if (nextLine.includes('-->') && nextLine.includes('.sol:')) {
+            const locationMatch = nextLine.match(/-->\s*(.+\.sol):(\d+):(\d+)/);
+            if (locationMatch) {
+              warning.file = locationMatch[1];
+              warning.line = parseInt(locationMatch[2]);
+              warning.column = parseInt(locationMatch[3]);
+              break;
+            }
+          }
+        }
+        
         warnings.push(warning);
+        continue;
+      }
+      
+      // Match simple warning format: "Warning: ..."
+      if (line.includes('Warning:') || line.includes('warning:')) {
+        warnings.push({
+          type: 'compilation_warning',
+          message: line.replace(/Warning:\s*/i, '').trim(),
+          line: i + 1,
+          severity: 'warning'
+        });
+        continue;
       }
     }
     
     return warnings;
+  }
+
+  /**
+   * Deduplicate errors based on file, line, column, and message
+   * @param {Array} errors - Array of error objects
+   * @returns {Array} Deduplicated errors
+   */
+  deduplicateErrors(errors) {
+    const seen = new Set();
+    return errors.filter(error => {
+      const key = `${error.file || ''}-${error.line || ''}-${error.column || ''}-${error.message || ''}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  }
+
+  /**
+   * Deduplicate warnings based on file, line, column, and message
+   * @param {Array} warnings - Array of warning objects
+   * @returns {Array} Deduplicated warnings
+   */
+  deduplicateWarnings(warnings) {
+    const seen = new Set();
+    return warnings.filter(warning => {
+      const key = `${warning.file || ''}-${warning.line || ''}-${warning.column || ''}-${warning.message || ''}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
   }
 }

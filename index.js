@@ -16,6 +16,7 @@ import { LessonService } from './src/lessonService.js';
 import { AuthService } from './src/authService.js';
 import { AuthMiddleware } from './src/authMiddleware.js';
 import { AdminCompilationManager } from './src/adminCompilationManager.js';
+import { AdminTestManager } from './src/adminTestManager.js';
 
 // Load environment variables
 dotenv.config();
@@ -40,6 +41,7 @@ const courseService = new CourseService();
 const moduleService = new ModuleService();
 const lessonService = new LessonService();
 const adminCompilationManager = new AdminCompilationManager();
+const adminTestManager = new AdminTestManager();
 
 
 // Middleware
@@ -219,6 +221,42 @@ app.post('/api/compile', AuthMiddleware.authenticateToken, AuthMiddleware.requir
   }
 });
 
+// Admin-only testing endpoint
+app.post('/api/test', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
+  try {
+    const { courseId, code, testCode, contractName } = req.body;
+
+    if (!courseId || !code || !testCode) {
+      return res.status(400).json({
+        success: false,
+        error: 'courseId, code, and testCode are required'
+      });
+    }
+
+    console.log(`🧪 Admin testing code for course ${courseId}`);
+
+    // Use AdminTestManager to test the code
+    const result = await adminTestManager.testCode(courseId, code, testCode, contractName);
+
+    // Always return the full result, whether successful or not
+    res.json({
+      success: result.success,
+      result: result.result,
+      courseId: result.courseId,
+      contractName: result.contractName,
+      testFileName: result.testFileName,
+      timestamp: result.timestamp
+    });
+
+  } catch (error) {
+    console.error('Admin test error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: 'Failed to run tests'
+    });
+  }
+});
 
 // Course management endpoints
 app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {

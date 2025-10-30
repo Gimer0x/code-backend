@@ -17,6 +17,8 @@ import { AuthService } from './src/authService.js';
 import { AuthMiddleware } from './src/authMiddleware.js';
 import { AdminCompilationManager } from './src/adminCompilationManager.js';
 import { AdminTestManager } from './src/adminTestManager.js';
+import AIService from './src/aiService.js';
+import StudentWorkspaceService from './src/studentWorkspaceService.js';
 
 // Load environment variables
 dotenv.config();
@@ -58,6 +60,21 @@ const apiLimiter = rateLimit({
 });
 
 app.use('/api/', apiLimiter);
+// Per-user student operations limiter
+const studentLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 40,
+  keyGenerator: (req) => (req.user?.id || req.ip),
+  message: 'Too many requests, please slow down.'
+});
+
+// Per-user AI limiter (stricter)
+const aiLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => (req.user?.id || req.ip),
+  message: 'Too many AI requests, please slow down.'
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -481,6 +498,46 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
       
       console.log(`✅ Foundry project created at: ${coursePath}`);
       
+      // Create course workspace structure under COURSE_WORKSPACE_DIR
+      try {
+        const courseRoot = process.env.COURSE_WORKSPACE_DIR || path.join(__dirname, 'courses');
+        const courseBase = path.join(courseRoot, `${courseId}`);
+        await fs.mkdir(courseBase, { recursive: true });
+        await fs.mkdir(path.join(courseBase, 'students'), { recursive: true });
+        await fs.mkdir(path.join(courseBase, 'templates'), { recursive: true });
+        await fs.mkdir(path.join(courseBase, 'tests'), { recursive: true });
+        const libDir = path.join(courseBase, 'lib');
+        try {
+          await fs.access(libDir);
+        } catch {
+          await fs.mkdir(libDir, { recursive: true });
+          // Prefer copying from the Foundry project we just created for this course
+          const foundrySource = path.join(basePath, `course-${courseId}`, 'lib');
+          const libSource = (await fs.stat(foundrySource).then(() => foundrySource).catch(() => process.env.COURSE_LIB_SOURCE_DIR)) || null;
+          if (libSource) {
+            // best-effort copy common libraries
+            const copyLibrary = async (name) => {
+              const src = path.join(libSource, name);
+              const dest = path.join(libDir, name);
+              try {
+                await fs.access(src);
+                // Node 18+ fs.cp exists; fallback otherwise
+                if (fs.cp) {
+                  await fs.cp(src, dest, { recursive: true });
+                } else {
+                  await fs.mkdir(dest, { recursive: true });
+                }
+              } catch {}
+            };
+            await copyLibrary('forge-std');
+            await copyLibrary('openzeppelin-contracts');
+          }
+        }
+        console.log(`📁 Course workspace ready at: ${courseBase}`);
+      } catch (wsErr) {
+        console.warn('⚠️ Could not initialize course workspace structure:', wsErr.message);
+      }
+
     } catch (projectError) {
       console.error('❌ Foundry project creation failed:', projectError.message);
       console.error('❌ Error details:', projectError);
@@ -907,6 +964,106 @@ app.post('/api/lessons/:lessonId/quiz-questions', AuthMiddleware.authenticateTok
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // Alias for images to allow frontend to reference a consistent path
 app.use('/api/images', express.static(path.join(__dirname, 'uploads')));
+
+// ========== AI Chat Endpoints ==========
+app.post('/api/ai/chat', AuthMiddleware.authenticateToken, aiLimiter, async (req, res) => {
+  try {
+    const { messages, model, metadata } = req.body || {};
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ success: false, error: 'messages required', code: 'MISSING_MESSAGES' });
+    }
+    const result = await AIService.chat({ messages, model, metadata });
+    const status = result.success ? 200 : 400;
+    res.status(status).json(result);
+  } catch (error) {
+    console.error('AI chat endpoint error:', error);
+    res.status(500).json({ success: false, error: 'AI chat failed', code: 'AI_FAILED' });
+  }
+});
+
+// ========== Student Workspace Endpoints (separate from admin) ==========
+app.post('/api/student/workspace/init', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const { courseId, exerciseId, mode, useTemplate } = req.body || {};
+    const result = await StudentWorkspaceService.initWorkspace(req.user.id, { courseId, exerciseId, mode, useTemplate });
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    console.error('Student workspace init error:', error);
+    res.status(500).json({ success: false, error: 'Init failed' });
+  }
+});
+
+// Save code only
+app.put('/api/student/code', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const { courseId, lessonId, files } = req.body || {};
+    const result = await StudentWorkspaceService.saveCode(req.user.id, { courseId, lessonId, files });
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    console.error('Student save code error:', error);
+    res.status(500).json({ success: false, error: 'Save failed' });
+  }
+});
+
+// Compile a specific file
+app.post('/api/student/compile', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const { courseId, lessonId, filePath, files } = req.body || {};
+    const result = await StudentWorkspaceService.compileFile(req.user.id, { courseId, lessonId, filePath, files });
+    res.status(result.success ? 200 : 200).json(result);
+  } catch (error) {
+    if (String(error.message).includes('TIMEOUT')) {
+      return res.status(408).json({ success: false, error: 'Compilation timed out' });
+    }
+    console.error('Student compile error:', error);
+    res.status(500).json({ success: false, error: 'Compilation failed' });
+  }
+});
+
+// Test using evaluator file from DB
+app.post('/api/student/test', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const { courseId, lessonId, files } = req.body || {};
+    // Fetch evaluator test from DB
+    const test = await prisma.challengeTest.findFirst({ where: { lessonId } });
+    if (!test) {
+      return res.status(404).json({ success: false, error: 'Evaluator test not found' });
+    }
+    const result = await StudentWorkspaceService.testFile(req.user.id, { courseId, lessonId, files, testFileFromDB: { testFileName: test.testFileName, testContent: test.testContent } });
+    res.status(result.success ? 200 : 200).json(result);
+  } catch (error) {
+    if (String(error.message).includes('TIMEOUT')) {
+      return res.status(408).json({ success: false, error: 'Test timed out' });
+    }
+    console.error('Student test error:', error);
+    res.status(500).json({ success: false, error: 'Test failed' });
+  }
+});
+
+// Progress
+app.get('/api/student/progress', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const { courseId, lessonId } = req.query;
+    const result = await StudentWorkspaceService.getProgress(req.user.id, { courseId, lessonId });
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Student progress error:', error);
+    res.status(500).json({ success: false, error: 'Progress retrieval failed' });
+  }
+});
+
+app.post('/api/ai/chat/stream', AuthMiddleware.authenticateToken, aiLimiter, async (req, res) => {
+  try {
+    const { messages, model } = req.body || {};
+    if (!Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ success: false, error: 'messages required', code: 'MISSING_MESSAGES' });
+    }
+    await AIService.stream(req, res, { messages, model });
+  } catch (error) {
+    console.error('AI chat stream endpoint error:', error);
+    res.status(500).json({ success: false, error: 'AI stream failed', code: 'AI_FAILED' });
+  }
+});
 
 // Start the server
 app.listen(PORT, () => {

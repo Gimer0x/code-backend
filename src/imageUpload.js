@@ -47,8 +47,8 @@ export async function processImage(buffer, filename) {
       .webp({ quality: 80 })
       .toFile(filePath);
 
-    // Return relative path for database storage
-    return `uploads/courses/${processedFilename}`;
+    // Return relative path for database storage (leading slash)
+    return `/uploads/courses/${processedFilename}`;
   } catch (error) {
     console.error('Image processing error:', error);
     throw new Error('Failed to process image');

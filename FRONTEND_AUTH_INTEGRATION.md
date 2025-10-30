@@ -103,7 +103,28 @@ Content-Type: application/json
 }
 ```
 
-#### 4. Get User Profile
+#### 4. Google Login (User)
+```http
+POST /api/user-auth/google
+Content-Type: application/json
+
+{
+  "idToken": "<google_id_token>"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "user": { /* user object */ },
+  "accessToken": "...",
+  "refreshToken": "...",
+  "message": "Google login successful"
+}
+```
+
+#### 5. Get User Profile
 ```http
 GET /api/auth/profile
 Authorization: Bearer <access_token>
@@ -131,7 +152,7 @@ Authorization: Bearer <access_token>
 }
 ```
 
-#### 5. Update Profile
+#### 6. Update Profile
 ```http
 PUT /api/auth/profile
 Authorization: Bearer <access_token>
@@ -143,7 +164,7 @@ Content-Type: application/json
 }
 ```
 
-#### 6. Change Password
+#### 7. Change Password
 ```http
 POST /api/auth/change-password
 Authorization: Bearer <access_token>
@@ -155,7 +176,68 @@ Content-Type: application/json
 }
 ```
 
-#### 7. Create Admin User (One-time setup)
+#### 8. Create Admin User (One-time setup)
+
+### Anonymous Session Check
+```http
+GET /api/user-auth/session
+```
+
+Response when anonymous:
+```json
+{ "success": true, "isAnonymous": true }
+```
+
+Response when authenticated:
+```json
+{ "success": true, "isAnonymous": false, "user": { /* user */ } }
+```
+
+### Subscription (Paid Users)
+
+#### 1. Start Checkout
+```http
+POST /api/user-auth/subscribe/start
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "plan": "MONTHLY", // or YEARLY
+  "successUrl": "https://app.example.com/billing/success",
+  "cancelUrl": "https://app.example.com/billing/cancel"
+}
+```
+
+Response:
+```json
+{ "success": true, "checkoutUrl": "https://checkout.stripe.com/...", "sessionId": "cs_test_..." }
+```
+
+#### 2. Stripe Webhook (server-to-server)
+```
+POST /api/user-auth/stripe/webhook
+```
+
+Configure `STRIPE_WEBHOOK_SECRET` and point your Stripe webhook to this URL.
+
+#### 3. Get Subscription Status
+```http
+GET /api/user-auth/subscription
+Authorization: Bearer <access_token>
+```
+Response:
+```json
+{
+  "success": true,
+  "subscription": {
+    "subscriptionPlan": "FREE|MONTHLY|YEARLY",
+    "subscriptionStatus": "ACTIVE|INACTIVE|CANCELED|PAST_DUE|TRIALING",
+    "trialEndsAt": null,
+    "subscriptionEndsAt": null,
+    "isPremium": false
+  }
+}
+```
 ```http
 POST /api/admin/create-admin
 Content-Type: application/json
@@ -504,6 +586,16 @@ Add these to your frontend environment:
 ```env
 REACT_APP_API_BASE_URL=http://localhost:3002
 REACT_APP_JWT_SECRET=your-jwt-secret-key
+```
+
+Backend variables for OAuth/Stripe:
+```env
+GOOGLE_CLIENT_ID=your-google-client-id
+STRIPE_SECRET_KEY=sk_live_or_test
+STRIPE_PRICE_MONTHLY=price_xxx
+STRIPE_PRICE_YEARLY=price_xxx
+STRIPE_WEBHOOK_SECRET=whsec_xxx
+FRONTEND_URL=http://localhost:3000
 ```
 
 ## 📝 Next Steps

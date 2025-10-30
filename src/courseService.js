@@ -28,6 +28,23 @@ export class CourseService {
         throw new Error('Course ID, title, and goals are required');
       }
 
+      // Normalize thumbnail to a relative path if provided
+      let normalizedThumbnail = thumbnail;
+      if (typeof normalizedThumbnail === 'string' && normalizedThumbnail.length > 0) {
+        try {
+          // If absolute URL, strip protocol/host and keep path
+          if (normalizedThumbnail.startsWith('http://') || normalizedThumbnail.startsWith('https://')) {
+            const u = new URL(normalizedThumbnail);
+            normalizedThumbnail = u.pathname;
+          }
+          // Ensure it starts with '/uploads'
+          if (normalizedThumbnail && !normalizedThumbnail.startsWith('/uploads')) {
+            const idx = normalizedThumbnail.indexOf('/uploads');
+            if (idx !== -1) normalizedThumbnail = normalizedThumbnail.slice(idx);
+          }
+        } catch {}
+      }
+
       // Create course in database
       const course = await prisma.course.create({
         data: {
@@ -37,7 +54,7 @@ export class CourseService {
           goals,
           level: level.toUpperCase(),
           access: access.toUpperCase(),
-          thumbnail,
+          thumbnail: normalizedThumbnail,
           creatorId,
           status: 'ACTIVE'
         }
@@ -237,12 +254,24 @@ export class CourseService {
    */
   async updateCourse(courseId, updateData) {
     try {
+      // Normalize thumbnail if present in updateData
+      let dataToUpdate = { ...updateData };
+      if (typeof dataToUpdate.thumbnail === 'string' && dataToUpdate.thumbnail.length > 0) {
+        try {
+          if (dataToUpdate.thumbnail.startsWith('http://') || dataToUpdate.thumbnail.startsWith('https://')) {
+            const u = new URL(dataToUpdate.thumbnail);
+            dataToUpdate.thumbnail = u.pathname;
+          }
+          if (!dataToUpdate.thumbnail.startsWith('/uploads')) {
+            const idx = dataToUpdate.thumbnail.indexOf('/uploads');
+            if (idx !== -1) dataToUpdate.thumbnail = dataToUpdate.thumbnail.slice(idx);
+          }
+        } catch {}
+      }
+
       const course = await prisma.course.update({
         where: { id: courseId },
-        data: {
-          ...updateData,
-          updatedAt: new Date()
-        }
+        data: { ...dataToUpdate, updatedAt: new Date() }
       });
 
       return {

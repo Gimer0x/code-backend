@@ -70,6 +70,64 @@ app.get('/health', (req, res) => {
 });
 
 // Authentication endpoints
+// User auth (separate namespace from admin)
+app.post('/api/user-auth/google', async (req, res) => {
+  try {
+    const result = await AuthService.googleLogin(req.body);
+    const status = result.success ? 200 : (result.code?.includes('MISSING') ? 400 : 401);
+    res.status(status).json(result);
+  } catch (error) {
+    console.error('Google auth error:', error);
+    res.status(500).json({ success: false, error: 'Google auth failed', code: 'GOOGLE_AUTH_FAILED' });
+  }
+});
+
+app.get('/api/user-auth/session', AuthMiddleware.optionalAuth, async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.json({ success: true, isAnonymous: true });
+    }
+    return res.json({ success: true, isAnonymous: false, user: req.user });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to get session' });
+  }
+});
+
+app.post('/api/user-auth/subscribe/start', AuthMiddleware.authenticateToken, async (req, res) => {
+  try {
+    const result = await AuthService.startSubscriptionCheckout(req.user.id, req.body || {});
+    const status = result.success ? 200 : 400;
+    res.status(status).json(result);
+  } catch (error) {
+    console.error('Start subscription error:', error);
+    res.status(500).json({ success: false, error: 'Failed to start subscription', code: 'SUBSCRIPTION_START_FAILED' });
+  }
+});
+
+// Stripe webhook: we may not have access to raw body due to global json parser
+app.post('/api/user-auth/stripe/webhook', async (req, res) => {
+  try {
+    const signature = req.headers['stripe-signature'];
+    // Best-effort raw body reconstruction if needed
+    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
+    const result = await AuthService.handleStripeWebhook(rawBody, signature);
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    console.error('Stripe webhook error:', error);
+    res.status(500).json({ success: false, error: 'Webhook error' });
+  }
+});
+
+app.get('/api/user-auth/subscription', AuthMiddleware.authenticateToken, async (req, res) => {
+  try {
+    const result = await AuthService.getSubscriptionStatus(req.user.id);
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    console.error('Get subscription error:', error);
+    res.status(500).json({ success: false, error: 'Failed to get subscription', code: 'SUBSCRIPTION_STATUS_FAILED' });
+  }
+});
+
 app.post('/api/auth/register', async (req, res) => {
   try {
     const result = await AuthService.register(req.body);
@@ -847,6 +905,8 @@ app.post('/api/lessons/:lessonId/quiz-questions', AuthMiddleware.authenticateTok
 
 // Serve uploaded images
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Alias for images to allow frontend to reference a consistent path
+app.use('/api/images', express.static(path.join(__dirname, 'uploads')));
 
 // Start the server
 app.listen(PORT, () => {

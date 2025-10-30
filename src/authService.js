@@ -476,4 +476,237 @@ export class AuthService {
       };
     }
   }
+
+  /**
+   * Google OAuth login using ID token (from Google One Tap or OAuth flow)
+   */
+  static async googleLogin({ idToken }) {
+    try {
+      if (!idToken) {
+        return {
+          success: false,
+          error: 'Google idToken is required',
+          code: 'MISSING_ID_TOKEN'
+        };
+      }
+
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) {
+        return {
+          success: false,
+          error: 'Google OAuth not configured',
+          code: 'GOOGLE_NOT_CONFIGURED'
+        };
+      }
+
+      // Lazy import to avoid hard dependency if unused
+      const { OAuth2Client } = await import('google-auth-library');
+      const oauthClient = new OAuth2Client(clientId);
+
+      const ticket = await oauthClient.verifyIdToken({ idToken, audience: clientId });
+      const payload = ticket.getPayload();
+      const email = payload?.email?.toLowerCase();
+
+      if (!email) {
+        return {
+          success: false,
+          error: 'Unable to verify Google token',
+          code: 'GOOGLE_VERIFY_FAILED'
+        };
+      }
+
+      // Find or create user without password
+      let user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        user = await prisma.user.create({
+          data: {
+            email,
+            name: payload?.name || null,
+            photoUrl: payload?.picture || null,
+            role: 'STUDENT',
+            isPremium: false,
+            password: null
+          }
+        });
+      } else if (!user.photoUrl || !user.name) {
+        // Update profile fields opportunistically
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            ...(user.name ? {} : { name: payload?.name || null }),
+            ...(user.photoUrl ? {} : { photoUrl: payload?.picture || null })
+          }
+        });
+      }
+
+      const safeUser = {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        isPremium: user.isPremium,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt
+      };
+
+      const accessToken = JWTUtils.generateToken(safeUser);
+      const refreshToken = JWTUtils.generateRefreshToken(safeUser);
+
+      return {
+        success: true,
+        user: safeUser,
+        accessToken,
+        refreshToken,
+        message: 'Google login successful'
+      };
+    } catch (error) {
+      console.error('Google login error:', error);
+      return {
+        success: false,
+        error: 'Google login failed',
+        code: 'GOOGLE_LOGIN_FAILED'
+      };
+    }
+  }
+
+  /**
+   * Begin subscription checkout (Stripe)
+   */
+  static async startSubscriptionCheckout(userId, { plan = 'MONTHLY', successUrl, cancelUrl }) {
+    try {
+      const stripeSecret = process.env.STRIPE_SECRET_KEY;
+      const priceMonthly = process.env.STRIPE_PRICE_MONTHLY;
+      const priceYearly = process.env.STRIPE_PRICE_YEARLY;
+      if (!stripeSecret || !priceMonthly || !priceYearly) {
+        return {
+          success: false,
+          error: 'Stripe not configured',
+          code: 'STRIPE_NOT_CONFIGURED'
+        };
+      }
+
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        return { success: false, error: 'User not found', code: 'USER_NOT_FOUND' };
+      }
+
+      const Stripe = (await import('stripe')).default;
+      const stripe = new Stripe(stripeSecret, { apiVersion: '2024-06-20' });
+
+      // Ensure customer
+      let customerId = user.stripeCustomerId || undefined;
+      if (!customerId) {
+        const customer = await stripe.customers.create({ email: user.email, name: user.name || undefined });
+        customerId = customer.id;
+        await prisma.user.update({ where: { id: user.id }, data: { stripeCustomerId: customerId } });
+      }
+
+      const priceId = plan === 'YEARLY' ? priceYearly : priceMonthly;
+
+      const session = await stripe.checkout.sessions.create({
+        mode: 'subscription',
+        customer: customerId,
+        line_items: [{ price: priceId, quantity: 1 }],
+        success_url: successUrl || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing/success`,
+        cancel_url: cancelUrl || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing/cancel`,
+        metadata: { userId: user.id, plan }
+      });
+
+      return { success: true, checkoutUrl: session.url, sessionId: session.id };
+    } catch (error) {
+      console.error('Start subscription error:', error);
+      return { success: false, error: 'Failed to start subscription', code: 'SUBSCRIPTION_START_FAILED' };
+    }
+  }
+
+  /**
+   * Handle Stripe webhook to update subscription status
+   */
+  static async handleStripeWebhook(rawBody, signature) {
+    try {
+      const stripeSecret = process.env.STRIPE_SECRET_KEY;
+      const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+      if (!stripeSecret || !webhookSecret) {
+        return { status: 400, body: { success: false, error: 'Stripe webhook not configured' } };
+      }
+
+      const Stripe = (await import('stripe')).default;
+      const stripe = new Stripe(stripeSecret, { apiVersion: '2024-06-20' });
+
+      let event;
+      try {
+        event = stripe.webhooks.constructEvent(rawBody, signature, webhookSecret);
+      } catch (err) {
+        console.error('Stripe webhook signature verification failed:', err.message);
+        return { status: 400, body: { success: false, error: 'Invalid signature' } };
+      }
+
+      switch (event.type) {
+        case 'checkout.session.completed': {
+          const session = event.data.object;
+          const userId = session.metadata?.userId;
+          const plan = session.metadata?.plan;
+          if (userId) {
+            await prisma.user.update({
+              where: { id: userId },
+              data: {
+                subscriptionPlan: (plan === 'YEARLY' ? 'YEARLY' : 'MONTHLY'),
+                subscriptionStatus: 'ACTIVE',
+                isPremium: true,
+                stripeSubscriptionId: session.subscription || undefined
+              }
+            });
+          }
+          break;
+        }
+        case 'customer.subscription.deleted': {
+          const sub = event.data.object;
+          const subscriptionId = sub.id;
+          await prisma.user.updateMany({
+            where: { stripeSubscriptionId: subscriptionId },
+            data: { subscriptionStatus: 'CANCELED', isPremium: false, subscriptionEndsAt: new Date() }
+          });
+          break;
+        }
+        case 'invoice.payment_failed': {
+          const subId = event.data.object.subscription;
+          await prisma.user.updateMany({
+            where: { stripeSubscriptionId: subId || '' },
+            data: { subscriptionStatus: 'PAST_DUE' }
+          });
+          break;
+        }
+        default:
+          break;
+      }
+
+      return { status: 200, body: { received: true } };
+    } catch (error) {
+      console.error('Stripe webhook error:', error);
+      return { status: 500, body: { success: false, error: 'Webhook handling failed' } };
+    }
+  }
+
+  /**
+   * Get subscription status
+   */
+  static async getSubscriptionStatus(userId) {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          subscriptionPlan: true,
+          subscriptionStatus: true,
+          trialEndsAt: true,
+          subscriptionEndsAt: true,
+          isPremium: true
+        }
+      });
+      if (!user) return { success: false, error: 'User not found', code: 'USER_NOT_FOUND' };
+      return { success: true, subscription: user };
+    } catch (error) {
+      console.error('Get subscription status error:', error);
+      return { success: false, error: 'Failed to get subscription', code: 'SUBSCRIPTION_STATUS_FAILED' };
+    }
+  }
 }

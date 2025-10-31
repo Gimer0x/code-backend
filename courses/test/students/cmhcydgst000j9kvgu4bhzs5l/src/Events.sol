@@ -14,12 +14,10 @@ contract Events {
     function inc() external {
         count += 1;
         emit Increment(msg.sender, count);
-        bool test;
     }
 
     function dec() external {
         count -= 1;
         emit Decrement(msg.sender, count);
-        uint256 _value;
     }
 }

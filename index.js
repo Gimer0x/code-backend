@@ -1044,16 +1044,59 @@ app.post('/api/student/compile', AuthMiddleware.authenticateToken, studentLimite
 });
 
 // Test using evaluator file from DB
+// Note: Code must be saved first via PUT /api/student/code
+// This endpoint will:
+// 1. Save code to DB (if files provided)
+// 2. Compile code first
+// 3. If compilation fails, return compilation errors/warnings (no tests run)
+// 4. If compilation succeeds (or has warnings), run tests
+// 5. Test file is named based on contract name: {ContractName}Test.t.sol
 app.post('/api/student/test', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
   try {
-    const { courseId, lessonId, files } = req.body || {};
-    // Fetch evaluator test from DB
-    const test = await prisma.challengeTest.findFirst({ where: { lessonId } });
-    if (!test) {
-      return res.status(404).json({ success: false, error: 'Evaluator test not found' });
+    const { courseId, lessonId, files, filePath, solc } = req.body || {};
+    
+    console.log(`[TEST ENDPOINT] Received test request: userId=${req.user.id}, courseId=${courseId}, lessonId=${lessonId}`);
+    
+    if (!courseId || !lessonId) {
+      console.error(`[TEST ENDPOINT] Missing required parameters: courseId=${courseId}, lessonId=${lessonId}`);
+      return res.status(400).json({ success: false, error: 'courseId and lessonId are required' });
     }
-    const result = await StudentWorkspaceService.testFile(req.user.id, { courseId, lessonId, files, testFileFromDB: { testFileName: test.testFileName, testContent: test.testContent } });
-    res.status(result.success ? 200 : 200).json(result);
+
+    // testFile will handle:
+    // - Saving code to DB if files provided (DB is source of truth)
+    // - Compiling code first
+    // - Returning compilation errors if compilation fails
+    // - Running tests only if compilation succeeds
+    // - Generating test filename from contract name: {ContractName}Test.t.sol
+    // - Retrieving evaluator test from ChallengeTest table for this lesson
+    // - Running ONLY the specific test file (using --match-path)
+    const result = await StudentWorkspaceService.testFile(req.user.id, { 
+      courseId, 
+      lessonId, 
+      files, 
+      filePath,
+      solc 
+    });
+    
+    console.log(`[TEST ENDPOINT] Test result: success=${result.success}, code=${result.code || 'none'}`);
+
+    // Handle different result scenarios
+    if (result.code === 'NO_CODE_FOUND') {
+      return res.status(400).json(result);
+    }
+    if (result.code === 'NO_CONTRACT_NAME') {
+      return res.status(400).json(result);
+    }
+    if (result.code === 'COMPILATION_FAILED') {
+      // Return compilation errors without running tests
+      return res.status(200).json(result);
+    }
+    if (result.code === 'TEST_NOT_FOUND') {
+      return res.status(404).json(result);
+    }
+
+    // Test executed successfully (may have passed or failed)
+    res.status(200).json(result);
   } catch (error) {
     if (String(error.message).includes('TIMEOUT')) {
       return res.status(408).json({ success: false, error: 'Test timed out' });

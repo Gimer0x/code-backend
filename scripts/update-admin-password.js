@@ -25,7 +25,7 @@ async function updateAdminPassword() {
 
     // Hash the new password
     const saltRounds = 12;
-    const hashedPassword = await bcrypt.hash('admin123', saltRounds);
+    const hashedPassword = await bcrypt.hash('Admin!123', saltRounds);
 
     // Update the admin user with password
     const updatedAdmin = await prisma.user.update({

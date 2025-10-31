@@ -1026,8 +1026,13 @@ app.put('/api/student/code', AuthMiddleware.authenticateToken, studentLimiter, a
 // Compile a specific file
 app.post('/api/student/compile', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
   try {
-    const { courseId, lessonId, filePath, files } = req.body || {};
-    const result = await StudentWorkspaceService.compileFile(req.user.id, { courseId, lessonId, filePath, files });
+    const { courseId, lessonId, filePath, solc } = req.body || {};
+    if (!courseId || !lessonId) {
+      return res.status(400).json({ success: false, error: 'courseId and lessonId are required' });
+    }
+    // Note: files are NOT accepted here - they must be saved first via PUT /api/student/code
+    // This ensures DB is always the source of truth
+    const result = await StudentWorkspaceService.compileFile(req.user.id, { courseId, lessonId, filePath, solc });
     res.status(result.success ? 200 : 200).json(result);
   } catch (error) {
     if (String(error.message).includes('TIMEOUT')) {
@@ -1067,6 +1072,21 @@ app.get('/api/student/progress', AuthMiddleware.authenticateToken, studentLimite
   } catch (error) {
     console.error('Student progress error:', error);
     res.status(500).json({ success: false, error: 'Progress retrieval failed' });
+  }
+});
+
+// Reset student code to initial lesson code
+app.post('/api/student/reset', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const { courseId, lessonId, exerciseId } = req.body || {};
+    if (!courseId || !lessonId) {
+      return res.status(400).json({ success: false, error: 'courseId and lessonId are required' });
+    }
+    const result = await StudentWorkspaceService.resetToInitialCode(req.user.id, { courseId, lessonId, exerciseId });
+    res.status(result.success ? 200 : 400).json(result);
+  } catch (error) {
+    console.error('Student reset error:', error);
+    res.status(500).json({ success: false, error: 'Reset failed' });
   }
 });
 

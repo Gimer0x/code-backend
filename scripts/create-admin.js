@@ -24,7 +24,7 @@ async function createAdminUser() {
     // Admin user data
     const adminData = {
       email: process.env.ADMIN_EMAIL || 'admin@dappdojo.com',
-      password: process.env.ADMIN_PASSWORD || 'Admin123!@#',
+      password: process.env.ADMIN_PASSWORD || 'Admin!123',
       name: 'DappDojo Admin',
       role: 'ADMIN',
       isPremium: true

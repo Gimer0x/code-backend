@@ -105,6 +105,39 @@ async function writeFoundryToml(studentDir, solc = '0.8.30') {
   await fs.writeFile(path.join(studentDir, 'foundry.toml'), toml);
 }
 
+/**
+ * Extract contract name from Solidity code
+ * @param {string} code - Solidity source code
+ * @returns {string|null} Contract name or null if not found
+ */
+function extractContractName(code) {
+  if (!code || typeof code !== 'string') return null;
+  
+  // Remove comments to avoid false matches
+  const withoutComments = code
+    .replace(/\/\*[\s\S]*?\*\//g, '') // Remove /* ... */ comments
+    .replace(/\/\/.*$/gm, ''); // Remove // comments
+  
+  // Match: contract ContractName { or contract ContractName is ...
+  // Also handle: abstract contract, interface, library
+  // Priority order: contract > abstract contract > interface > library
+  const patterns = [
+    /contract\s+(\w+)(?:\s+is\s+[^{]+|\s*\{)/, // contract Events is IERC20 { or contract Events {
+    /abstract\s+contract\s+(\w+)(?:\s+is\s+[^{]+|\s*\{)/, // abstract contract Events {
+    /interface\s+(\w+)(?:\s+is\s+[^{]+|\s*\{)/, // interface IEvents {
+    /library\s+(\w+)(?:\s+is\s+[^{]+|\s*\{)/, // library EventsLib {
+  ];
+  
+  for (const pattern of patterns) {
+    const match = withoutComments.match(pattern);
+    if (match && match[1]) {
+      return match[1];
+    }
+  }
+  
+  return null;
+}
+
 async function copyTemplate(courseId, exerciseId, studentDir) {
   const srcDir = path.join(studentDir, 'src');
   await ensureDir(srcDir);
@@ -188,28 +221,59 @@ export class StudentWorkspaceService {
 
   static async saveCode(userId, { courseId, lessonId, files }) {
     // Persist StudentProgress and StudentFile rows
-    const results = [];
+    const savedFiles = [];
     for (const f of files || []) {
+      // Extract contract name from code to use as filename
+      const contractName = extractContractName(f.content);
+      const originalPath = f.path || 'src/Contract.sol';
+      const dir = path.dirname(originalPath); // e.g., "src" or "test"
+      
+      // Determine filename: use contract name if found, otherwise use original filename
+      let fileName;
+      let filePath;
+      
+      if (contractName) {
+        // Use contract name as filename (e.g., "Events.sol")
+        fileName = `${contractName}.sol`;
+        filePath = path.join(dir, fileName).replace(/\\/g, '/'); // Ensure forward slashes
+      } else {
+        // Fallback to original filename if no contract name found
+        fileName = path.basename(originalPath);
+        filePath = originalPath;
+      }
+      
       const existing = await prisma.studentProgress.upsert({
         where: { userId_courseId_lessonId: { userId, courseId, lessonId } },
         create: { userId, courseId, lessonId, codeContent: f.content, lastSavedAt: new Date() },
         update: { codeContent: f.content, lastSavedAt: new Date() }
       });
-      await prisma.studentFile.upsert({
-        where: { studentProgressId_fileName: { studentProgressId: existing.id, fileName: path.basename(f.path) } },
-        create: { studentProgressId: existing.id, fileName: path.basename(f.path), filePath: f.path, content: f.content, fileType: 'contract' },
-        update: { content: f.content, filePath: f.path }
+      const savedFile = await prisma.studentFile.upsert({
+        where: { studentProgressId_fileName: { studentProgressId: existing.id, fileName: fileName } },
+        create: { studentProgressId: existing.id, fileName: fileName, filePath: filePath, content: f.content, fileType: 'contract' },
+        update: { content: f.content, filePath: filePath },
+        select: { id: true, fileName: true, filePath: true, fileType: true, isMain: true }
       });
-      results.push(existing.id);
+      savedFiles.push(savedFile);
     }
-    return { success: true };
+    return { success: true, files: savedFiles };
   }
 
   static async upsertFilesOnDisk(userId, { courseId, files }) {
     const studentDir = getStudentDir(courseId, userId);
     await ensureDir(studentDir);
     for (const f of files || []) {
-      const target = guardStudentPath(studentDir, f.path);
+      // Extract contract name from code to ensure correct filename
+      const contractName = extractContractName(f.content);
+      let filePath = f.path || 'src/Contract.sol';
+      
+      if (contractName) {
+        // Use contract name as filename (e.g., "Events.sol")
+        const dir = path.dirname(filePath); // e.g., "src" or "test"
+        const fileName = `${contractName}.sol`;
+        filePath = path.join(dir, fileName).replace(/\\/g, '/'); // Ensure forward slashes
+      }
+      
+      const target = guardStudentPath(studentDir, filePath);
       await ensureDir(path.dirname(target));
       await fs.writeFile(target, f.content ?? '');
     }

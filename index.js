@@ -52,11 +52,29 @@ app.use(cors());
 app.use(compression());
 app.use(express.json());
 
-// Rate limiting
+// Rate limiting (tunable, and relaxed in development)
+const isDev = (process.env.NODE_ENV || 'development') !== 'production';
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Max 100 requests per 15 minutes per IP
-  message: 'Too many requests from this IP, please try again after 15 minutes',
+  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000),
+  max: Number(process.env.RATE_LIMIT_MAX || (isDev ? 2000 : 100)),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: 'Too many requests from this IP, please try again later',
+  skip: (req) => {
+    if (isDev) return true; // disable limiter in development
+    // Allowlist common, idempotent fetches that are heavily used by the UI
+    const p = req.path || '';
+    const m = req.method || 'GET';
+    if (m === 'GET' && (
+      p.startsWith('/api/courses') ||
+      p.startsWith('/api/modules') ||
+      p.startsWith('/api/lessons') ||
+      p === '/api/auth/profile'
+    )) {
+      return true;
+    }
+    return false;
+  }
 });
 
 app.use('/api/', apiLimiter);
@@ -689,7 +707,7 @@ app.post('/api/upload/course-thumbnail', uploadSingleImage, async (req, res) => 
       });
     }
 
-    console.log(`📸 Processing course thumbnail: ${req.file.originalname}`);
+    console.log(`Processing course thumbnail: ${req.file.originalname}`);
     
     // Process the image
     const imagePath = await processImage(req.file.buffer, req.file.originalname);

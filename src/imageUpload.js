@@ -24,6 +24,20 @@ const upload = multer({
   }
 });
 
+// Sanitize filename to handle UTF-8 and special characters safely
+function sanitizeFilename(filename) {
+  // Decode if needed, then remove/replace problematic characters
+  let safe = filename
+    .normalize('NFD') // Decompose accented characters
+    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+    .replace(/[^a-zA-Z0-9.-]/g, '_') // Replace non-alphanumeric with underscore
+    .replace(/_{2,}/g, '_') // Collapse multiple underscores
+    .trim();
+  // Ensure we have something valid
+  if (!safe || safe.length === 0) safe = 'image';
+  return safe.substring(0, 100); // Limit length
+}
+
 // Image processing function
 export async function processImage(buffer, filename) {
   try {
@@ -31,9 +45,9 @@ export async function processImage(buffer, filename) {
     const uploadsDir = path.join(process.cwd(), 'uploads', 'courses');
     await fs.mkdir(uploadsDir, { recursive: true });
 
-    // Generate unique filename
+    // Generate unique filename with sanitization
     const timestamp = Date.now();
-    const name = path.parse(filename).name;
+    const name = sanitizeFilename(path.parse(filename).name);
     const ext = '.webp'; // Convert to WebP for better compression
     const processedFilename = `${name}-${timestamp}${ext}`;
     const filePath = path.join(uploadsDir, processedFilename);

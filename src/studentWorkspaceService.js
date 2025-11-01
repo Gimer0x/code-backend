@@ -356,9 +356,7 @@ export class StudentWorkspaceService {
             testFilesHidden = true;
           }
         }
-        if (testFilesHidden) {
-          console.log(`[COMPILE] Temporarily hid ${hiddenTestFiles.length} test file(s) during compilation`);
-        }
+        // Test files temporarily hidden during compilation
       }
     } catch (hideError) {
       console.warn(`[COMPILE] Warning: Could not hide test files (non-fatal):`, hideError.message);
@@ -403,9 +401,6 @@ export class StudentWorkspaceService {
       // This flag tells Foundry to ONLY compile the specified file and its dependencies
       // Use --force to prevent Foundry from using cached compilation results
       // This ensures we always compile the latest code from disk
-      console.log(`[COMPILE] Compiling only file: ${rel} (test files temporarily hidden)`);
-      console.log(`[COMPILE] Using lib directory: ${libDir}`);
-      console.log(`[COMPILE] Command: forge build --force --json --contracts ${rel}`);
       res = await runForge(studentDir, ['build', '--force', '--json', '--contracts', rel]);
       
     } finally {
@@ -417,7 +412,6 @@ export class StudentWorkspaceService {
               await fs.rename(fileInfo.hidden, fileInfo.original);
             }
           }
-          console.log(`[COMPILE] Restored ${hiddenTestFiles.length} test file(s) after compilation`);
         } catch (restoreError) {
           console.warn(`[COMPILE] Warning: Could not restore test files:`, restoreError.message);
         }
@@ -563,11 +557,6 @@ export class StudentWorkspaceService {
     const errors = this.deduplicateErrors(allErrors);
     const warnings = this.deduplicateWarnings(allWarnings);
     
-    // Debug log to see what we're capturing (can be removed in production)
-    if (allWarnings.length !== warnings.length) {
-      console.log(`Warning deduplication: ${allWarnings.length} warnings found, ${warnings.length} unique warnings after deduplication`);
-    }
-    
     // Success is determined by:
     // 1. Forge exit code should be 0
     // 2. No actual errors in the parsed output (warnings don't count as failures)
@@ -681,8 +670,6 @@ export class StudentWorkspaceService {
 
     // Get evaluator test from DB
     if (!testFileFromDB) {
-      console.log(`[TEST] Looking for challenge test for lessonId: ${lessonId}`);
-      
       // First, try to get test from ChallengeTest table (preferred)
       let test = await prisma.challengeTest.findFirst({ 
         where: { lessonId },
@@ -706,7 +693,6 @@ export class StudentWorkspaceService {
       
       // If not found in ChallengeTest table, check Lesson.tests field (fallback for legacy data)
       if (!test) {
-        console.log(`[TEST] No test in ChallengeTest table, checking Lesson.tests field...`);
         const lesson = await prisma.lesson.findUnique({
           where: { id: lessonId },
           select: {
@@ -731,9 +717,6 @@ export class StudentWorkspaceService {
         
         // If test exists in Lesson.tests field, use it (legacy support)
         if (lesson.tests && lesson.tests.trim().length > 0) {
-          console.log(`[TEST] Found test in Lesson.tests field (legacy)`);
-          console.log(`[TEST] Test content length: ${lesson.tests.length} characters`);
-          
           // Extract test filename from contract name
           // Try to extract contract name from test content (e.g., "contract EventsTest")
           const testContractMatch = lesson.tests.match(/contract\s+(\w+)/);
@@ -750,9 +733,6 @@ export class StudentWorkspaceService {
             testFileName: legacyTestFileName,
             testContent: lesson.tests
           };
-          
-          console.log(`[TEST] Using legacy test from Lesson.tests field`);
-          console.log(`[TEST] Generated test filename: ${legacyTestFileName}`);
         } else {
           // No test found in either location
           console.error(`[TEST] No challenge test found for lesson: ${lessonId} (Title: ${lesson.title}, Order: ${lesson.order})`);
@@ -778,17 +758,10 @@ export class StudentWorkspaceService {
         }
       } else {
         // Test found in ChallengeTest table (preferred)
-        console.log(`[TEST] Found challenge test: ${test.testFileName} (ID: ${test.id}) for lesson: ${lessonId}`);
-        if (test.lesson) {
-          console.log(`[TEST] Lesson details: ${test.lesson.title} (Order: ${test.lesson.order}, Module: ${test.lesson.module?.title})`);
-        }
-        
         testFileFromDB = {
           testFileName: test.testFileName,
           testContent: test.testContent
         };
-        
-        console.log(`[TEST] Test content length: ${test.testContent.length} characters`);
       }
     }
 
@@ -829,16 +802,11 @@ export class StudentWorkspaceService {
         };
       }
     }
-    console.log(`[TEST] Verified lib directory exists: ${libDir}`);
 
     // Write evaluator test file to disk
     // Note: The test file name from DB might be different, but we use contract-based name for actual file
     const targetTest = path.join(studentDir, 'test', testFileName);
-    console.log(`[TEST] Writing test file to disk: ${targetTest}`);
-    console.log(`[TEST] Test file from DB: ${testFileFromDB.testFileName}`);
-    console.log(`[TEST] Using contract-based filename: ${testFileName}`);
     await fs.writeFile(targetTest, testFileFromDB.testContent, 'utf8');
-    console.log(`[TEST] Test file written successfully`);
 
     // Clean up any existing test files with different names to avoid conflicts
     try {
@@ -856,11 +824,8 @@ export class StudentWorkspaceService {
     // Step 6: Run tests
     // IMPORTANT: Use --match-path to run ONLY this specific test file (not all tests)
     const testStartTime = Date.now();
-    console.log(`[TEST] Running tests exclusively for: test/${testFileName}`);
-    console.log(`[TEST] Command: forge test --json --match-path test/${testFileName}`);
     const testRes = await runForge(studentDir, ['test', '--json', '--match-path', `test/${testFileName}`], 60000);
     const testTime = Date.now() - testStartTime;
-    console.log(`[TEST] Test execution completed in ${testTime}ms (exit code: ${testRes.code})`);
 
     // Step 7: Parse test results (similar to adminTestManager)
     // Check if output looks like compilation errors (not JSON)
@@ -901,17 +866,6 @@ export class StudentWorkspaceService {
     }
     
     const parsedTestResult = this.parseTestResult(testRes);
-    
-    // Log test results for debugging
-    console.log(`[TEST] Parsed test result: success=${parsedTestResult.success}, total=${parsedTestResult.summary?.total}, passed=${parsedTestResult.summary?.passed}, failed=${parsedTestResult.summary?.failed}`);
-    if (parsedTestResult.tests && parsedTestResult.tests.length > 0) {
-      parsedTestResult.tests.forEach(test => {
-        console.log(`[TEST] Test: ${test.name} - ${test.status}`);
-        if (test.error) {
-          console.log(`[TEST]   Error: ${test.error}`);
-        }
-      });
-    }
     
     // If exit code is non-zero but parsing says success, override it (exit code is authoritative)
     // Exit code 0 = all tests passed, exit code != 0 = tests failed or error
@@ -982,10 +936,7 @@ export class StudentWorkspaceService {
         throw new Error('Empty stdout');
       }
       const testData = JSON.parse(stdout);
-      console.log(`[TEST] Raw JSON keys: ${Object.keys(testData).join(', ')}`);
-      console.log(`[TEST] Raw JSON sample (first 500 chars): ${JSON.stringify(testData).substring(0, 500)}`);
       const parsed = this.parseJsonTestResult(testData);
-      console.log(`[TEST] Parsed JSON successfully: ${parsed.summary?.total} tests, ${parsed.summary?.passed} passed, ${parsed.summary?.failed} failed`);
       return parsed;
     } catch (error) {
       console.warn(`[TEST] Failed to parse stdout as JSON: ${error.message}`);
@@ -994,15 +945,13 @@ export class StudentWorkspaceService {
         if (stderr && stderr.trim().length > 0) {
           const testData = JSON.parse(stderr);
           const parsed = this.parseJsonTestResult(testData);
-          console.log(`[TEST] Parsed stderr as JSON successfully`);
           return parsed;
         }
       } catch (stderrError) {
-        console.warn(`[TEST] Failed to parse stderr as JSON: ${stderrError.message}`);
+        // Fallback to text parsing
       }
       
       // Fallback to text parsing if JSON parsing fails
-      console.log(`[TEST] Falling back to text parsing. stdout length: ${stdout?.length || 0}, stderr length: ${stderr?.length || 0}`);
       return this.parseTextTestResult(stdout, stderr, code);
     }
   }

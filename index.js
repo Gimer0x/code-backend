@@ -32,7 +32,6 @@ const PORT = process.env.PORT || 3002;
 
 // Initialize paths
 const basePath = process.env.FOUNDRY_CACHE_DIR || path.join(__dirname, './foundry-projects');
-console.log(`🔧 Base path for Foundry projects: ${basePath}`);
 const studentSessionsPath = process.env.STUDENT_SESSIONS_DIR || path.join(__dirname, '../student-sessions');
 
 // Initialize Prisma client
@@ -290,8 +289,6 @@ app.post('/api/compile', AuthMiddleware.authenticateToken, AuthMiddleware.requir
       });
     }
 
-    console.log(`🔧 Admin compiling code for course ${courseId}`);
-
     // Use AdminCompilationManager to compile the code
     const result = await adminCompilationManager.compileCode(courseId, code, contractName);
 
@@ -326,8 +323,6 @@ app.post('/api/test', AuthMiddleware.authenticateToken, AuthMiddleware.requireAd
       });
     }
 
-    console.log(`🧪 Admin testing code for course ${courseId}`);
-
     // Use AdminTestManager to test the code
     const result = await adminTestManager.testCode(courseId, code, testCode, contractName);
 
@@ -356,8 +351,6 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
   try {
     const { courseId, title, language, goals, level, access, thumbnail, foundryConfig, dependencies, templates, creatorId } = req.body;
     
-    console.log(`🔧 Creating course: ${title} (${courseId})`);
-    
     // Use a default creator ID if not provided (for now)
     const defaultCreatorId = creatorId || 'admin-user-id';
     
@@ -382,11 +375,9 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
     // Also create the Foundry project structure
     try {
       const coursePath = path.join(basePath, `course-${courseId}`);
-      console.log(`🔧 Creating directory: ${coursePath}`);
       await fs.mkdir(coursePath, { recursive: true });
       
       // Initialize git repository first (required for forge init)
-      console.log(`🔧 Initializing git repository in: ${coursePath}`);
       const gitInitResult = await new Promise((resolve, reject) => {
         const git = spawn('git', ['init'], {
           cwd: coursePath,
@@ -405,8 +396,6 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
         });
         
         git.on('close', (code) => {
-          console.log(`Git init completed with code: ${code}`);
-          if (stderr) console.log(`🔧 Git stderr: ${stderr}`);
           resolve({ code, stdout, stderr });
         });
         
@@ -417,7 +406,6 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
       });
 
       // Initialize Foundry project
-      console.log(`🔧 Initializing Foundry project in: ${coursePath}`);
       const initResult = await new Promise((resolve, reject) => {
         const forge = spawn('forge', ['init', '--force', '.'], {
           cwd: coursePath,
@@ -436,8 +424,6 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
         });
         
         forge.on('close', (code) => {
-          console.log(`Forge init completed with code: ${code}`);
-          if (stderr) console.log(`🔧 Forge stderr: ${stderr}`);
           resolve({ code, stdout, stderr });
         });
         
@@ -453,8 +439,6 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
       
       // Install dependencies if provided
       if (dependencies && dependencies.length > 0) {
-        console.log(`🔧 Installing dependencies: ${dependencies.map(d => d.name).join(', ')}`);
-        
         // Map common dependency names to their GitHub URLs
         const dependencyUrls = {
           'openzeppelin-contracts': 'https://github.com/OpenZeppelin/openzeppelin-contracts',
@@ -503,9 +487,7 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
               });
             });
             
-            if (installResult.code === 0) {
-              console.log(`✅ Installed ${dependency.name}${dependency.version ? `@${dependency.version}` : ''}`);
-            } else {
+            if (installResult.code !== 0) {
               console.warn(`⚠️ Failed to install ${dependency.name}: ${installResult.stderr}`);
             }
           } catch (depError) {
@@ -513,8 +495,6 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
           }
         }
       }
-      
-      console.log(`✅ Foundry project created at: ${coursePath}`);
       
       // Create course workspace structure under COURSE_WORKSPACE_DIR
       try {
@@ -551,7 +531,6 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
             await copyLibrary('openzeppelin-contracts');
           }
         }
-        console.log(`📁 Course workspace ready at: ${courseBase}`);
       } catch (wsErr) {
         console.warn('⚠️ Could not initialize course workspace structure:', wsErr.message);
       }
@@ -707,8 +686,6 @@ app.post('/api/upload/course-thumbnail', uploadSingleImage, async (req, res) => 
       });
     }
 
-    console.log(`Processing course thumbnail: ${req.file.originalname}`);
-    
     // Process the image
     const imagePath = await processImage(req.file.buffer, req.file.originalname);
     
@@ -1055,10 +1032,7 @@ app.post('/api/student/test', AuthMiddleware.authenticateToken, studentLimiter, 
   try {
     const { courseId, lessonId, files, filePath, solc } = req.body || {};
     
-    console.log(`[TEST ENDPOINT] Received test request: userId=${req.user.id}, courseId=${courseId}, lessonId=${lessonId}`);
-    
     if (!courseId || !lessonId) {
-      console.error(`[TEST ENDPOINT] Missing required parameters: courseId=${courseId}, lessonId=${lessonId}`);
       return res.status(400).json({ success: false, error: 'courseId and lessonId are required' });
     }
 
@@ -1077,8 +1051,6 @@ app.post('/api/student/test', AuthMiddleware.authenticateToken, studentLimiter, 
       filePath,
       solc 
     });
-    
-    console.log(`[TEST ENDPOINT] Test result: success=${result.success}, code=${result.code || 'none'}`);
 
     // Handle different result scenarios
     if (result.code === 'NO_CODE_FOUND') {
@@ -1148,7 +1120,5 @@ app.post('/api/ai/chat/stream', AuthMiddleware.authenticateToken, aiLimiter, asy
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Foundry service running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Features: Solidity compilation, Foundry testing`);
+  // Server started successfully
 });

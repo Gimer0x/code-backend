@@ -73,8 +73,6 @@ export class LessonService {
               testFileName: testFileName
             }
           });
-          
-          console.log(`[LESSON] Created ChallengeTest entry: ${testFileName} for lesson: ${lesson.id}`);
         } catch (error) {
           console.error(`[LESSON] Failed to create ChallengeTest entry (non-fatal):`, error.message);
           // Don't fail lesson creation if ChallengeTest creation fails
@@ -231,7 +229,6 @@ export class LessonService {
                   testFileName: testFileName
                 }
               });
-              console.log(`[LESSON] Updated ChallengeTest entry: ${testFileName} for lesson: ${lessonId}`);
             } else {
               // Create new test
               await prisma.challengeTest.create({
@@ -241,14 +238,12 @@ export class LessonService {
                   testFileName: testFileName
                 }
               });
-              console.log(`[LESSON] Created ChallengeTest entry: ${testFileName} for lesson: ${lessonId}`);
             }
           } else {
             // If tests is empty/null, delete ChallengeTest entries for this lesson
             await prisma.challengeTest.deleteMany({
               where: { lessonId }
             });
-            console.log(`[LESSON] Deleted ChallengeTest entries for lesson: ${lessonId}`);
           }
         } catch (error) {
           console.error(`[LESSON] Failed to update ChallengeTest entry (non-fatal):`, error.message);

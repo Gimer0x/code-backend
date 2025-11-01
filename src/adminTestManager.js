@@ -65,25 +65,12 @@ export class AdminTestManager {
       // IMPORTANT: Do this AFTER writing our test file to ensure it's not deleted
       await this.cleanupExistingTests(courseProjectPath, testFileName);
       
-      // STEP 1: Compile test file first to check if it's valid
-      // Note: If the test imports a contract that doesn't exist yet, 
-      // we'll create a minimal stub contract for compilation checking
-      // We'll check if the contract file exists, and if not, create a stub
-      const contractExists = await fs.access(contractPath).then(() => true).catch(() => false);
-      if (!contractExists) {
-        // Create a minimal stub contract so the test file can compile
-        // The stub will be replaced with the actual contract code later
-        const stubContract = `// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
-// Stub contract for test compilation - will be replaced with actual contract
-contract ${contractName} {
-    // Stub implementation
-}
-`;
-        await fs.writeFile(contractPath, stubContract, 'utf8');
-        tempContractCreated = true;
-      }
+      // STEP 1: Write contract code FIRST (even if it exists, we'll overwrite it)
+      // This ensures test compilation uses the correct contract code
+      await fs.writeFile(contractPath, code, 'utf8');
+      tempContractCreated = true;
       
+      // STEP 2: Compile test file to check if it's valid
       const testCompilationResult = await this.compileTestFile(courseProjectPath, testFileName);
       
       if (!testCompilationResult.success || testCompilationResult.exitCode !== 0) {
@@ -92,12 +79,6 @@ contract ${contractName} {
           testCompilationResult.stdout, 
           testCompilationResult.stderr
         );
-        
-        // Clean up stub contract if we created it
-        if (tempContractCreated && !contractExists) {
-          await fs.unlink(contractPath).catch(() => {});
-          tempContractCreated = false;
-        }
         
         return {
           success: false,
@@ -124,18 +105,15 @@ contract ${contractName} {
         };
       }
       
-      // STEP 2: Test compilation succeeded, now write actual contract code and run tests
-      // Write the actual contract code (replace stub if it existed)
-      await fs.writeFile(contractPath, code, 'utf8');
-      tempContractCreated = true;
-      
+      // STEP 3: Test compilation succeeded, now run tests
+      // Contract code is already written, so we can run tests directly
       // Verify files are still there before running tests
       const testFileStillExists = await fs.access(testPath).then(() => true).catch(() => false);
       if (!testFileStillExists) {
         throw new Error(`Test file was deleted before running tests: ${testFileName}`);
       }
       
-      // STEP 3: Run tests directly in the course project directory
+      // STEP 4: Run tests directly in the course project directory
       // Use --match-path to run only this specific test file
       const testResult = await this.runTests(courseProjectPath, testFileName);
       

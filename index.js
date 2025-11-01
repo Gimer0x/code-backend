@@ -314,17 +314,51 @@ app.post('/api/compile', AuthMiddleware.authenticateToken, AuthMiddleware.requir
 // Admin-only testing endpoint
 app.post('/api/test', AuthMiddleware.authenticateToken, AuthMiddleware.requireAdmin, async (req, res) => {
   try {
-    const { courseId, code, testCode, contractName } = req.body;
+    const { courseId, code, testCode, contractName, lessonId } = req.body;
 
-    if (!courseId || !code || !testCode) {
+    if (!courseId || !testCode) {
       return res.status(400).json({
         success: false,
-        error: 'courseId, code, and testCode are required'
+        error: 'courseId and testCode are required'
+      });
+    }
+
+    // If lessonId is provided, use solution code from DB instead of code from request
+    let codeToTest = code;
+    if (lessonId) {
+      try {
+        const lesson = await prisma.lesson.findUnique({
+          where: { id: lessonId },
+          select: { solutionCode: true, title: true }
+        });
+        
+        if (lesson && lesson.solutionCode) {
+          codeToTest = lesson.solutionCode;
+          console.log(`[ADMIN TEST] Using solution code from DB for lesson: ${lesson.title} (${lessonId})`);
+        } else {
+          console.warn(`[ADMIN TEST] No solution code found for lesson ${lessonId}, using provided code`);
+          if (!code) {
+            return res.status(400).json({
+              success: false,
+              error: `No solution code found for lesson ${lessonId}, and no code provided in request`
+            });
+          }
+        }
+      } catch (error) {
+        console.error(`[ADMIN TEST] Error fetching solution code: ${error.message}`);
+        // Fall back to provided code
+      }
+    }
+
+    if (!codeToTest) {
+      return res.status(400).json({
+        success: false,
+        error: 'code is required (or provide lessonId with solution code in DB)'
       });
     }
 
     // Use AdminTestManager to test the code
-    const result = await adminTestManager.testCode(courseId, code, testCode, contractName);
+    const result = await adminTestManager.testCode(courseId, codeToTest, testCode, contractName);
 
     // Handle test compilation failure separately
     if (result.code === 'TEST_COMPILATION_FAILED') {
@@ -338,7 +372,8 @@ app.post('/api/test', AuthMiddleware.authenticateToken, AuthMiddleware.requireAd
         courseId: result.courseId,
         contractName: result.contractName,
         testFileName: result.testFileName,
-        timestamp: result.timestamp
+        timestamp: result.timestamp,
+        usedSolutionCode: !!lessonId
       });
     }
 
@@ -349,7 +384,8 @@ app.post('/api/test', AuthMiddleware.authenticateToken, AuthMiddleware.requireAd
       courseId: result.courseId,
       contractName: result.contractName,
       testFileName: result.testFileName,
-      timestamp: result.timestamp
+      timestamp: result.timestamp,
+      usedSolutionCode: !!lessonId
     });
 
   } catch (error) {

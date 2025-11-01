@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
  */
 export class AdminCompilationManager {
   constructor() {
-    this.basePath = process.env.FOUNDRY_CACHE_DIR || path.join(__dirname, './foundry-projects');
+    this.basePath = process.env.FOUNDRY_CACHE_DIR || path.join(__dirname, '../foundry-projects');
   }
 
   /**
@@ -24,9 +24,13 @@ export class AdminCompilationManager {
    * @returns {Promise<Object>} Compilation result
    */
   async compileCode(courseId, code, contractName = 'CompileContract', options = {}) {
+    const contractFileName = `${contractName}.sol`;
+    const courseProjectPath = path.join(this.basePath, `course-${courseId}`);
+    const contractPath = path.join(courseProjectPath, 'src', contractFileName);
+    let tempFileCreated = false;
+    let originalContent = null;
+    
     try {
-      const courseProjectPath = path.join(this.basePath, `course-${courseId}`);
-      
       // Check if course project exists
       try {
         await fs.access(courseProjectPath);
@@ -34,29 +38,32 @@ export class AdminCompilationManager {
         throw new Error(`Course project not found: ${courseId}`);
       }
 
-      // Create temporary compilation directory outside the course project
-      const tempCompileDir = path.join(this.basePath, '.temp-compile', `course-${courseId}-${Date.now()}`);
-      await fs.mkdir(tempCompileDir, { recursive: true });
-      
-      // Copy course project files to temp directory
-      await this.copyCourseProjectToTemp(courseProjectPath, tempCompileDir);
+      // Ensure src directory exists
+      const srcDir = path.join(courseProjectPath, 'src');
+      await fs.mkdir(srcDir, { recursive: true });
 
-      // Write the code to compile
-      const contractFileName = `${contractName}.sol`;
-      const contractPath = path.join(tempCompileDir, 'src', contractFileName);
+      // Check if file already exists (backup it temporarily)
+      const fileExists = await fs.access(contractPath).then(() => true).catch(() => false);
+      if (fileExists) {
+        originalContent = await fs.readFile(contractPath, 'utf8');
+      }
+
+      // Write the code to compile directly in the course project
       await fs.writeFile(contractPath, code, 'utf8');
+      tempFileCreated = true;
+      
+      // Ensure remappings.txt exists for proper import resolution
+      await this.ensureRemappingsFile(courseProjectPath);
       
       // Clean up test files to avoid conflicts
-      await this.cleanupTestFiles(tempCompileDir);
+      await this.cleanupTestFiles(courseProjectPath);
       
-      // Compile the code
-      const compilationResult = await this.runCompilation(tempCompileDir, options);
+      // Compile the code directly in the course project directory
+      // This ensures lib folder and remappings work correctly
+      const compilationResult = await this.runCompilation(courseProjectPath, options);
       
       // Parse compilation results
       const parsedResult = this.parseCompilationResult(compilationResult);
-      
-      // Clean up temporary directory
-      await fs.rm(tempCompileDir, { recursive: true, force: true });
       
       return {
         success: parsedResult.success,
@@ -72,6 +79,24 @@ export class AdminCompilationManager {
         error: error.message,
         timestamp: new Date().toISOString()
       };
+    } finally {
+      // Clean up: remove the temporary file or restore original
+      try {
+        if (tempFileCreated) {
+          // Check if we had an original file to restore
+          if (originalContent !== null) {
+            await fs.writeFile(contractPath, originalContent, 'utf8');
+          } else {
+            // File didn't exist before, remove it
+            await fs.unlink(contractPath).catch(() => {
+              // Ignore if file doesn't exist
+            });
+          }
+        }
+      } catch (cleanupError) {
+        // Non-fatal cleanup error
+        console.error('Cleanup error (non-fatal):', cleanupError.message);
+      }
     }
   }
 
@@ -93,12 +118,58 @@ export class AdminCompilationManager {
   }
 
   /**
-   * Clean up test files to avoid conflicts
-   * @param {string} tempDir - Temporary directory path
+   * Ensure remappings.txt file exists for proper import resolution
+   * @param {string} projectDir - Project directory path
    */
-  async cleanupTestFiles(tempDir) {
+  async ensureRemappingsFile(projectDir) {
+    const remappingsPath = path.join(projectDir, 'remappings.txt');
     try {
-      const testDir = path.join(tempDir, 'test');
+      // Check if remappings.txt exists
+      await fs.access(remappingsPath);
+      // File exists, no need to create
+    } catch {
+      // File doesn't exist, generate it using forge remappings
+      try {
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        
+        // Get remappings from forge
+        const { stdout } = await execAsync('forge remappings', { cwd: projectDir });
+        if (stdout && stdout.trim()) {
+          await fs.writeFile(remappingsPath, stdout.trim(), 'utf8');
+        }
+      } catch (error) {
+        // If forge remappings fails, create basic remappings manually
+        const libDir = path.join(projectDir, 'lib');
+        const openzeppelinPath = path.join(libDir, 'openzeppelin-contracts');
+        const forgeStdPath = path.join(libDir, 'forge-std');
+        
+        const remappings = [];
+        try {
+          await fs.access(openzeppelinPath);
+          remappings.push('@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/');
+          remappings.push('openzeppelin-contracts/=lib/openzeppelin-contracts/');
+        } catch {}
+        
+        try {
+          await fs.access(forgeStdPath);
+          remappings.push('forge-std/=lib/forge-std/src/');
+        } catch {}
+        
+        if (remappings.length > 0) {
+          await fs.writeFile(remappingsPath, remappings.join('\n'), 'utf8');
+        }
+      }
+    }
+  }
+
+  /**
+   * Clean up test files to avoid conflicts
+   * @param {string} projectDir - Project directory path
+   */
+  async cleanupTestFiles(projectDir) {
+    try {
+      const testDir = path.join(projectDir, 'test');
       const testFiles = await fs.readdir(testDir);
       for (const file of testFiles) {
         if (file.endsWith('.t.sol')) {
@@ -112,11 +183,11 @@ export class AdminCompilationManager {
 
   /**
    * Run Foundry compilation
-   * @param {string} tempDir - Temporary directory path
+   * @param {string} projectDir - Project directory path
    * @param {Object} options - Compilation options
    * @returns {Promise<Object>} Compilation result
    */
-  async runCompilation(tempDir, options = {}) {
+  async runCompilation(projectDir, options = {}) {
     return new Promise((resolve, reject) => {
       const args = ['build', '--force'];
       if (options.verbose) {
@@ -127,7 +198,7 @@ export class AdminCompilationManager {
       }
 
       const process = spawn('forge', args, {
-        cwd: tempDir,
+        cwd: projectDir,
         stdio: 'pipe'
       });
 

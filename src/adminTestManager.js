@@ -231,18 +231,6 @@ export class AdminTestManager {
   }
 
   /**
-   * Copy course project to temporary directory
-   * @param {string} sourcePath - Source course project path
-   * @param {string} destinationPath - Destination temp path
-   */
-  async copyCourseProjectToTemp(sourcePath, destinationPath) {
-    await fs.cp(sourcePath, destinationPath, { 
-      recursive: true,
-      filter: (src) => !src.includes('.temp-test') && !src.includes('.git')
-    });
-  }
-
-  /**
    * Clean up existing test files to avoid conflicts
    * @param {string} projectDir - Project directory path
    * @param {string} excludeFile - Test file to keep

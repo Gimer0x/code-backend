@@ -134,6 +134,15 @@ ecosystem.config.js
 build/
 dist/
 
+# Foundry
+foundry-projects/
+lib/
+out/
+cache/
+broadcast/
+
+curses/
+uploads/
 # Test coverage
 coverage/
 

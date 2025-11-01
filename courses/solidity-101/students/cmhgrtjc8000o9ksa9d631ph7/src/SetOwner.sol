@@ -12,8 +12,4 @@ contract SetOwner is Ownable {
 
     constructor() payable Ownable(msg.sender){
     }
-
-    function setValue() external {
-        value = 0;
-    }
 }

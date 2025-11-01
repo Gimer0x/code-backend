@@ -53,11 +53,8 @@ export class AdminTestManager {
         originalTestContent = await fs.readFile(testPath, 'utf8');
       } catch {}
 
-      // Write the contract code directly in the course project
-      await fs.writeFile(contractPath, code, 'utf8');
-      tempContractCreated = true;
-
-      // Write the test code directly in the course project
+      // Write the test code directly in the course project FIRST
+      // We'll compile the test file before writing the contract code
       await fs.writeFile(testPath, testCode, 'utf8');
       tempTestCreated = true;
       
@@ -68,13 +65,77 @@ export class AdminTestManager {
       // IMPORTANT: Do this AFTER writing our test file to ensure it's not deleted
       await this.cleanupExistingTests(courseProjectPath, testFileName);
       
+      // STEP 1: Compile test file first to check if it's valid
+      // Note: If the test imports a contract that doesn't exist yet, 
+      // we'll create a minimal stub contract for compilation checking
+      // We'll check if the contract file exists, and if not, create a stub
+      const contractExists = await fs.access(contractPath).then(() => true).catch(() => false);
+      if (!contractExists) {
+        // Create a minimal stub contract so the test file can compile
+        // The stub will be replaced with the actual contract code later
+        const stubContract = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+// Stub contract for test compilation - will be replaced with actual contract
+contract ${contractName} {
+    // Stub implementation
+}
+`;
+        await fs.writeFile(contractPath, stubContract, 'utf8');
+        tempContractCreated = true;
+      }
+      
+      const testCompilationResult = await this.compileTestFile(courseProjectPath, testFileName);
+      
+      if (!testCompilationResult.success || testCompilationResult.exitCode !== 0) {
+        // Test file compilation failed, return compilation errors
+        const compilationErrors = this.extractCompilationErrors(
+          testCompilationResult.stdout, 
+          testCompilationResult.stderr
+        );
+        
+        // Clean up stub contract if we created it
+        if (tempContractCreated && !contractExists) {
+          await fs.unlink(contractPath).catch(() => {});
+          tempContractCreated = false;
+        }
+        
+        return {
+          success: false,
+          code: 'TEST_COMPILATION_FAILED',
+          error: 'Test file failed to compile',
+          message: 'The test file has compilation errors. Please fix them before running tests.',
+          errors: compilationErrors,
+          result: {
+            success: false,
+            tests: [],
+            errors: compilationErrors,
+            summary: {
+              total: 0,
+              passed: 0,
+              failed: 0
+            },
+            timestamp: new Date().toISOString(),
+            message: 'Test file failed to compile'
+          },
+          courseId,
+          contractName: contractFileName,
+          testFileName: testFileName,
+          timestamp: new Date().toISOString()
+        };
+      }
+      
+      // STEP 2: Test compilation succeeded, now write actual contract code and run tests
+      // Write the actual contract code (replace stub if it existed)
+      await fs.writeFile(contractPath, code, 'utf8');
+      tempContractCreated = true;
+      
       // Verify files are still there before running tests
       const testFileStillExists = await fs.access(testPath).then(() => true).catch(() => false);
       if (!testFileStillExists) {
         throw new Error(`Test file was deleted before running tests: ${testFileName}`);
       }
       
-      // Run tests directly in the course project directory
+      // STEP 3: Run tests directly in the course project directory
       // Use --match-path to run only this specific test file
       const testResult = await this.runTests(courseProjectPath, testFileName);
       
@@ -221,6 +282,49 @@ export class AdminTestManager {
     } catch (error) {
       // Test directory might not exist, continue
     }
+  }
+
+  /**
+   * Compile test file to check if it's valid before running tests
+   * @param {string} projectDir - Project directory path
+   * @param {string} testFileName - Test file name
+   * @returns {Promise<Object>} Compilation result
+   */
+  async compileTestFile(projectDir, testFileName) {
+    return new Promise((resolve, reject) => {
+      // Use forge build to compile test files
+      // Note: forge build doesn't support --match-path, so we compile all files
+      // Since we've already cleaned up other test files, only our test file will be compiled
+      const process = spawn('forge', ['build', '--force'], {
+        cwd: projectDir,
+        stdio: 'pipe'
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      process.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      process.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      process.on('close', (code) => {
+        resolve({
+          success: code === 0,
+          exitCode: code,
+          stdout,
+          stderr,
+          timestamp: new Date().toISOString()
+        });
+      });
+
+      process.on('error', (error) => {
+        reject(error);
+      });
+    });
   }
 
   /**

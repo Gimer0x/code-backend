@@ -326,6 +326,22 @@ app.post('/api/test', AuthMiddleware.authenticateToken, AuthMiddleware.requireAd
     // Use AdminTestManager to test the code
     const result = await adminTestManager.testCode(courseId, code, testCode, contractName);
 
+    // Handle test compilation failure separately
+    if (result.code === 'TEST_COMPILATION_FAILED') {
+      return res.status(200).json({
+        success: false,
+        code: result.code,
+        error: result.error,
+        message: result.message,
+        errors: result.errors,
+        result: result.result,
+        courseId: result.courseId,
+        contractName: result.contractName,
+        testFileName: result.testFileName,
+        timestamp: result.timestamp
+      });
+    }
+
     // Always return the full result, whether successful or not
     res.json({
       success: result.success,

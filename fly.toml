@@ -1,38 +1,22 @@
-# Fly.io configuration for DappDojo Backend Service
-app = "dappdojo-backend"
-primary_region = "sjc"
+# fly.toml app configuration file generated for code-backend on 2025-11-02T19:06:37Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'code-backend'
+primary_region = 'sjc'
 
 [build]
-
-[env]
-  NODE_ENV = "production"
-  PORT = "3002"
-  HOST = "0.0.0.0"
 
 [http_service]
   internal_port = 3002
   force_https = true
-  auto_stop_machines = true
+  auto_stop_machines = 'stop'
   auto_start_machines = true
-  min_machines_running = 1
-  processes = ["app"]
-
-  [[http_service.checks]]
-    grace_period = "10s"
-    interval = "30s"
-    method = "GET"
-    timeout = "5s"
-    path = "/health"
+  min_machines_running = 0
+  processes = ['app']
 
 [[vm]]
-  cpu_kind = "shared"
+  cpu_kind = 'shared'
   cpus = 1
   memory_mb = 512
-
-[mounts]
-  source = "dappdojo_backend_data"
-  destination = "/tmp"
-
-[[statics]]
-  guest_path = "/app/lib"
-  url_prefix = "/lib"

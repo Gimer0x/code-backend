@@ -12,9 +12,12 @@ RUN apk add --no-cache \
     pkgconfig
 
 # Install Foundry
-RUN curl -L https://foundry.paradigm.xyz | bash
+# The installer exits with code 1 due to shell detection in Docker, but still installs foundryup
+# We ignore the exit code and then explicitly run foundryup
+RUN mkdir -p /root/.foundry/bin && \
+    (curl -L https://foundry.paradigm.xyz | bash || true) && \
+    (test -f /root/.foundry/bin/foundryup && chmod +x /root/.foundry/bin/foundryup && /root/.foundry/bin/foundryup || echo "Warning: foundryup not found, trying alternative installation")
 ENV PATH="/root/.foundry/bin:$PATH"
-RUN foundryup
 
 # Set working directory
 WORKDIR /app

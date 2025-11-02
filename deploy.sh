@@ -101,7 +101,8 @@ if [ -d ".git" ]; then
 fi
 
 # Check if app exists, if not create it
-APP_NAME="${APP_NAME:-dappdojo-backend}"
+# Default to code-backend to match fly.toml
+APP_NAME="${APP_NAME:-code-backend}"
 if ! flyctl apps list | grep -q "$APP_NAME"; then
     echo "📱 Creating new Fly.io app: $APP_NAME..."
     flyctl apps create "$APP_NAME"

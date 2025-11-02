@@ -145,6 +145,10 @@ echo "⚠️  Please set the following secrets manually if not already set:"
 echo "   flyctl secrets set --app $APP_NAME CORS_ORIGIN='https://your-frontend-domain.com'"
 echo "   flyctl secrets set --app $APP_NAME JWT_SECRET='your-jwt-secret'"
 echo "   flyctl secrets set --app $APP_NAME SESSION_SECRET='your-session-secret'"
+echo ""
+echo "📧 Admin user credentials (optional - will be created after migration):"
+echo "   flyctl secrets set --app $APP_NAME ADMIN_EMAIL='gimer@dappdojo.com'"
+echo "   flyctl secrets set --app $APP_NAME ADMIN_PASSWORD='Ottawa!1978'"
 
 # Deploy the application
 echo "🚀 Deploying to Fly.io..."
@@ -157,9 +161,45 @@ flyctl status --app "$APP_NAME"
 echo "✅ Deployment complete!"
 echo "🌐 Your backend service is now running on Fly.io"
 echo ""
-echo "📋 Next steps:"
-echo "   1. Run database migrations:"
-echo "      flyctl ssh console --app $APP_NAME -C 'npm run db:migrate:prod'"
+
+# Check if admin credentials are set
+ADMIN_EMAIL_SET=$(flyctl secrets list --app "$APP_NAME" 2>/dev/null | grep -q "ADMIN_EMAIL" && echo "yes" || echo "no")
+ADMIN_PASSWORD_SET=$(flyctl secrets list --app "$APP_NAME" 2>/dev/null | grep -q "ADMIN_PASSWORD" && echo "yes" || echo "no")
+
+if [ "$ADMIN_EMAIL_SET" = "yes" ] && [ "$ADMIN_PASSWORD_SET" = "yes" ]; then
+    echo "📋 Admin credentials detected. Running post-deployment setup..."
+    echo ""
+    
+    echo "   1. Running database migrations..."
+    if flyctl ssh console --app "$APP_NAME" -C 'npm run db:migrate:prod'; then
+        echo "   ✅ Migrations completed"
+    else
+        echo "   ⚠️  Migration failed or already completed"
+    fi
+    echo ""
+    
+    echo "   2. Creating admin user..."
+    if flyctl ssh console --app "$APP_NAME" -C 'npm run create-admin'; then
+        echo "   ✅ Admin user setup completed"
+    else
+        echo "   ⚠️  Admin creation failed or admin already exists"
+    fi
+    echo ""
+else
+    echo "📋 Next steps:"
+    echo "   1. Set admin credentials (if not already set):"
+    echo "      flyctl secrets set --app $APP_NAME ADMIN_EMAIL='gimer@dappdojo.com'"
+    echo "      flyctl secrets set --app $APP_NAME ADMIN_PASSWORD='Ottawa!1978'"
+    echo ""
+    echo "   2. Run database migrations:"
+    echo "      flyctl ssh console --app $APP_NAME -C 'npm run db:migrate:prod'"
+    echo ""
+    echo "   3. Create admin user:"
+    echo "      flyctl ssh console --app $APP_NAME -C 'npm run create-admin'"
+    echo ""
+    echo "   Note: Once ADMIN_EMAIL and ADMIN_PASSWORD are set, this script will"
+    echo "   automatically run migrations and create the admin on future deployments."
+fi
 echo ""
 echo "📋 Useful commands:"
 echo "   flyctl logs --app $APP_NAME          - View logs"

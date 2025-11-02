@@ -31,11 +31,34 @@ export class AdminCompilationManager {
     let originalContent = null;
     
     try {
-      // Check if course project exists
+      // Check if course project exists, create if it doesn't
       try {
         await fs.access(courseProjectPath);
       } catch (error) {
-        throw new Error(`Course project not found: ${courseId}`);
+        // Course project doesn't exist, create it
+        console.log(`📁 Creating course project directory: ${courseProjectPath}`);
+        await fs.mkdir(courseProjectPath, { recursive: true });
+        
+        // Initialize as Foundry project if forge is available
+        try {
+          const { promisify } = await import('util');
+          const execAsync = promisify(exec);
+          
+          // Try to initialize git first (forge init requires it)
+          try {
+            await execAsync('git init', { cwd: courseProjectPath });
+          } catch (gitError) {
+            // Git init might fail, but continue anyway
+            console.log('⚠️  Git init failed (non-critical):', gitError.message);
+          }
+          
+          // Initialize Foundry project
+          await execAsync('forge init --force .', { cwd: courseProjectPath });
+          console.log('✅ Foundry project initialized');
+        } catch (initError) {
+          // If forge init fails, just create the basic structure
+          console.log('⚠️  Forge init failed, creating basic structure:', initError.message);
+        }
       }
 
       // Ensure src directory exists

@@ -134,11 +134,24 @@ else
     fi
 fi
 
+# Create volume for Foundry projects if it doesn't exist
+echo "💾 Checking for Foundry projects volume..."
+if ! flyctl volumes list --app "$APP_NAME" 2>/dev/null | grep -q "foundry_projects_vol"; then
+    echo "📦 Creating volume for Foundry projects..."
+    flyctl volumes create foundry_projects_vol \
+      --size 10 \
+      --region sjc \
+      --app "$APP_NAME" || echo "⚠️  Volume creation failed or already exists"
+else
+    echo "✅ Foundry projects volume already exists"
+fi
+
 # Set environment variables
 echo "🔧 Setting environment variables..."
 flyctl secrets set --app "$APP_NAME" NODE_ENV=production
 flyctl secrets set --app "$APP_NAME" PORT=3002
 flyctl secrets set --app "$APP_NAME" HOST=0.0.0.0
+flyctl secrets set --app "$APP_NAME" FOUNDRY_CACHE_DIR=/app/foundry-projects
 
 # Note: You'll need to set these manually with your actual values:
 echo "⚠️  Please set the following secrets manually if not already set:"

@@ -19,6 +19,8 @@
     "db:migrate:prod": "node scripts/migrate-db.js",
     "update-admin-password": "node scripts/update-admin-password.js",
     "create-admin": "node scripts/create-admin.js",
+    "verify-admin": "node scripts/verify-admin.js",
+    "check-course": "node scripts/check-course.js",
     "postdeploy": "npm run db:migrate:prod"
   },
   "keywords": [

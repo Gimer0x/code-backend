@@ -63,7 +63,15 @@ const adminTestManager = new AdminTestManager();
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+
+// CORS configuration
+const corsOptions = {
+  origin: process.env.CORS_ORIGIN || '*',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+app.use(cors(corsOptions));
 app.use(compression());
 
 // Stripe webhook endpoint needs raw body BEFORE json parser

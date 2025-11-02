@@ -20,8 +20,85 @@ if ! flyctl auth whoami &> /dev/null; then
     flyctl auth login
 fi
 
-# Navigate to backend directory
-cd backend
+# Navigate to backend directory (if script is run from project root)
+if [ -d "backend" ]; then
+    cd backend
+elif [ ! -f "index.js" ] && [ ! -f "package.json" ]; then
+    echo "❌ Error: Please run this script from the project root or backend directory"
+    exit 1
+fi
+
+# Git handling: Check if we're in a git repository
+if [ -d ".git" ]; then
+    echo "📦 Checking git status..."
+    
+    # Check if there are uncommitted changes
+    if ! git diff-index --quiet HEAD --; then
+        echo "⚠️  Warning: You have uncommitted changes."
+        echo "   These changes will be included in the deployment."
+        read -p "   Continue? (y/n) " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "❌ Deployment cancelled"
+            exit 1
+        fi
+    fi
+    
+    # Fetch latest changes
+    echo "📥 Fetching latest changes from remote..."
+    git fetch origin || echo "⚠️  Could not fetch from remote (may not have remote configured)"
+    
+    # Check if branches have diverged
+    LOCAL=$(git rev-parse @)
+    REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "")
+    BASE=$(git merge-base @ @{u} 2>/dev/null || echo "")
+    
+    if [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ] && [ "$LOCAL" != "$BASE" ]; then
+        echo "⚠️  Your branch has diverged from origin."
+        echo "   Local commits: $(git rev-list --count @ ^@{u} 2>/dev/null || echo '?')"
+        echo "   Remote commits: $(git rev-list --count @{u} ^@ 2>/dev/null || echo '?')"
+        echo ""
+        echo "   Options:"
+        echo "   1. Merge remote changes (recommended for collaboration)"
+        echo "   2. Rebase local changes on top of remote"
+        echo "   3. Skip git sync and deploy current state"
+        read -p "   Choose option (1/2/3): " -n 1 -r
+        echo
+        
+        case $REPLY in
+            1)
+                echo "🔄 Merging remote changes..."
+                git pull --no-rebase || {
+                    echo "❌ Merge failed. Please resolve conflicts manually."
+                    exit 1
+                }
+                ;;
+            2)
+                echo "🔄 Rebasing local changes..."
+                git pull --rebase || {
+                    echo "❌ Rebase failed. Please resolve conflicts manually."
+                    exit 1
+                }
+                ;;
+            3)
+                echo "⏭️  Skipping git sync..."
+                ;;
+            *)
+                echo "❌ Invalid option. Deployment cancelled."
+                exit 1
+                ;;
+        esac
+    elif [ -n "$REMOTE" ] && [ "$LOCAL" != "$REMOTE" ]; then
+        # Just need to pull (fast-forward)
+        echo "📥 Pulling latest changes..."
+        git pull || echo "⚠️  Could not pull changes"
+    fi
+    
+    # Show current git status
+    echo "📋 Current git status:"
+    git log --oneline -5 || echo "   (git log unavailable)"
+    echo ""
+fi
 
 # Check if app exists, if not create it
 APP_NAME="${APP_NAME:-dappdojo-backend}"

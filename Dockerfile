@@ -25,11 +25,17 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install Node.js dependencies
-RUN npm ci --only=production
+# Install all dependencies (including dev dependencies for Prisma CLI)
+RUN npm ci
 
 # Copy application code
 COPY . .
+
+# Generate Prisma client (required at runtime)
+RUN npx prisma generate
+
+# Remove dev dependencies to reduce image size (keep only production)
+RUN npm prune --production
 
 # Create necessary directories
 RUN mkdir -p /tmp/foundry-cache /tmp/foundry-out /tmp/student-workspaces

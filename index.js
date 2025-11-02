@@ -35,7 +35,23 @@ const basePath = process.env.FOUNDRY_CACHE_DIR || path.join(__dirname, './foundr
 const studentSessionsPath = process.env.STUDENT_SESSIONS_DIR || path.join(__dirname, '../student-sessions');
 
 // Initialize Prisma client
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  log: process.env.NODE_ENV === 'production' ? ['error'] : ['query', 'error', 'warn'],
+});
+
+// Test database connection on startup
+async function testDatabaseConnection() {
+  try {
+    await prisma.$connect();
+    console.log('✅ Database connection successful');
+  } catch (error) {
+    console.error('❌ Database connection failed:', error.message);
+    // Don't exit immediately - let the app start and retry on first request
+    // This allows Fly.io to retry if database is temporarily unavailable
+  }
+}
+
+testDatabaseConnection();
 
 // Initialize services
 const courseService = new CourseService();
@@ -1180,7 +1196,43 @@ app.post('/api/ai/chat/stream', AuthMiddleware.authenticateToken, aiLimiter, asy
   }
 });
 
+// Error handlers for unhandled rejections and exceptions
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Don't exit in production, but log the error
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Exit gracefully
+  process.exit(1);
+});
+
 // Start the server
-app.listen(PORT, () => {
-  // Server started successfully
+const HOST = process.env.HOST || '0.0.0.0';
+const server = app.listen(PORT, HOST, () => {
+  console.log(`Server running on http://${HOST}:${PORT}`);
+  console.log(`Health check available at http://${HOST}:${PORT}/health`);
+});
+
+// Handle server errors
+server.on('error', (error) => {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+  
+  const bind = typeof PORT === 'string' ? 'Pipe ' + PORT : 'Port ' + PORT;
+  
+  switch (error.code) {
+    case 'EACCES':
+      console.error(`${bind} requires elevated privileges`);
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(`${bind} is already in use`);
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
 });

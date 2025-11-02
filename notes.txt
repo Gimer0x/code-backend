@@ -3,6 +3,13 @@ curl -X POST http://localhost:3002/api/upload/course-thumbnail \
   -F "thumbnail=@/Users/gimer/Downloads/course2.png"
 
 
+stripe listen --forward-to localhost:3002/api/user-auth/stripe/webhook
+
+Stripe Testing
+Card: 4242 4242 4242 4242
+Expiry: 12/25
+CVC: 123
+
 
 Course Creation
 

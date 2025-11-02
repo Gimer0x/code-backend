@@ -49,6 +49,28 @@ const adminTestManager = new AdminTestManager();
 app.use(helmet());
 app.use(cors());
 app.use(compression());
+
+// Stripe webhook endpoint needs raw body BEFORE json parser
+// This must be BEFORE express.json() middleware
+app.post('/api/user-auth/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const signature = req.headers['stripe-signature'];
+    const rawBody = req.body; // This is now the raw buffer
+    
+    console.log('[Stripe Webhook] Received event, signature:', signature ? 'present' : 'missing');
+    
+    const result = await AuthService.handleStripeWebhook(rawBody, signature);
+    
+    console.log('[Stripe Webhook] Result:', result.status, result.body?.success ? 'success' : 'error');
+    
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    console.error('[Stripe Webhook] Error:', error);
+    res.status(500).json({ success: false, error: 'Webhook error', details: error.message });
+  }
+});
+
+// JSON parser for all other routes
 app.use(express.json());
 
 // Rate limiting (tunable, and relaxed in development)
@@ -138,19 +160,7 @@ app.post('/api/user-auth/subscribe/start', AuthMiddleware.authenticateToken, asy
   }
 });
 
-// Stripe webhook: we may not have access to raw body due to global json parser
-app.post('/api/user-auth/stripe/webhook', async (req, res) => {
-  try {
-    const signature = req.headers['stripe-signature'];
-    // Best-effort raw body reconstruction if needed
-    const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(typeof req.body === 'string' ? req.body : JSON.stringify(req.body || {}));
-    const result = await AuthService.handleStripeWebhook(rawBody, signature);
-    res.status(result.status).json(result.body);
-  } catch (error) {
-    console.error('Stripe webhook error:', error);
-    res.status(500).json({ success: false, error: 'Webhook error' });
-  }
-});
+// Webhook endpoint moved above - defined before express.json() middleware
 
 app.get('/api/user-auth/subscription', AuthMiddleware.authenticateToken, async (req, res) => {
   try {

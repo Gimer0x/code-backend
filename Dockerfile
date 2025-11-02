@@ -1,15 +1,14 @@
-# Use Node.js 18 Alpine for smaller image size
-FROM node:18-alpine
+# Use Node.js 18 Debian-based image for Foundry compatibility
+# Foundry requires glibc which is not available in Alpine (musl)
+FROM node:18
 
 # Install system dependencies required for Foundry
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     git \
     curl \
-    bash \
-    gcc \
-    musl-dev \
-    openssl-dev \
-    pkgconfig
+    build-essential \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install Foundry
 # The installer exits with code 1 due to shell detection in Docker, but still installs foundryup

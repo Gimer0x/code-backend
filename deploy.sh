@@ -134,16 +134,36 @@ else
     fi
 fi
 
-# Create volume for Foundry projects if it doesn't exist
-echo "💾 Checking for Foundry projects volume..."
-if ! flyctl volumes list --app "$APP_NAME" 2>/dev/null | grep -q "foundry_projects_vol"; then
-    echo "📦 Creating volume for Foundry projects..."
-    flyctl volumes create foundry_projects_vol \
-      --size 10 \
-      --region sjc \
-      --app "$APP_NAME" || echo "⚠️  Volume creation failed or already exists"
+# Create volumes for Foundry projects if they don't exist
+echo "💾 Checking for Foundry projects volumes..."
+REGION="sjc"
+
+# Get existing volumes for this app
+EXISTING_VOLUMES=$(flyctl volumes list --app "$APP_NAME" 2>/dev/null | grep "foundry_projects_vol" | wc -l || echo "0")
+
+# Get number of machines
+MACHINE_COUNT=$(flyctl machines list --app "$APP_NAME" 2>/dev/null | grep -c "started\|stopped" || echo "1")
+
+echo "   Existing volumes: $EXISTING_VOLUMES"
+echo "   Machines: $MACHINE_COUNT"
+
+# Create volumes for each machine (if not enough exist)
+NEEDED_VOLUMES=$((MACHINE_COUNT > 0 ? MACHINE_COUNT : 1))
+VOLUMES_TO_CREATE=$((NEEDED_VOLUMES - EXISTING_VOLUMES))
+
+if [ $VOLUMES_TO_CREATE -gt 0 ]; then
+    echo "📦 Creating $VOLUMES_TO_CREATE volume(s) for Foundry projects..."
+    for i in $(seq 1 $VOLUMES_TO_CREATE); do
+        echo "   Creating volume $i of $VOLUMES_TO_CREATE..."
+        flyctl volumes create foundry_projects_vol \
+          --size 10 \
+          --region "$REGION" \
+          --app "$APP_NAME" \
+          --yes || echo "⚠️  Volume creation failed (may already exist)"
+    done
+    echo "✅ Volume creation complete"
 else
-    echo "✅ Foundry projects volume already exists"
+    echo "✅ Foundry projects volumes already exist"
 fi
 
 # Set environment variables

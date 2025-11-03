@@ -34,9 +34,19 @@ const PORT = process.env.PORT || 3002;
 const basePath = process.env.FOUNDRY_CACHE_DIR || path.join(__dirname, './foundry-projects');
 const studentSessionsPath = process.env.STUDENT_SESSIONS_DIR || path.join(__dirname, '../student-sessions');
 
-// Initialize Prisma client
+// Initialize Prisma client with connection pooling
+// Connection pooling improves database performance by reusing connections
+const prismaUrl = process.env.DATABASE_URL?.includes('connection_limit') 
+  ? process.env.DATABASE_URL 
+  : `${process.env.DATABASE_URL}?connection_limit=10&pool_timeout=20`;
+
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['query', 'error', 'warn'],
+  datasources: {
+    db: {
+      url: prismaUrl
+    }
+  }
 });
 
 // Test database connection on startup
@@ -523,9 +533,31 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
       const foundryToml = generateFoundryToml(foundryConfig || {});
       await fs.writeFile(path.join(coursePath, 'foundry.toml'), foundryToml);
       
-      // Install dependencies if provided
+      // Always install default libraries (forge-std and openzeppelin-contracts)
+      // These are essential for Solidity development and testing
+      const defaultDependencies = [
+        { name: 'forge-std', url: 'https://github.com/foundry-rs/forge-std' },
+        { name: 'openzeppelin-contracts', url: 'https://github.com/OpenZeppelin/openzeppelin-contracts' }
+      ];
+      
+      // Merge default dependencies with provided dependencies
+      const allDependencies = [...defaultDependencies];
       if (dependencies && dependencies.length > 0) {
-        // Map common dependency names to their GitHub URLs
+        // Add provided dependencies, avoiding duplicates
+        for (const dep of dependencies) {
+          const isDuplicate = allDependencies.some(d => 
+            d.name === dep.name || 
+            (dep.name === 'forge-std' || dep.name === 'openzeppelin-contracts')
+          );
+          if (!isDuplicate) {
+            allDependencies.push(dep);
+          }
+        }
+      }
+      
+      // Install all dependencies
+      if (allDependencies.length > 0) {
+        // Map common dependency names to their GitHub URLs (fallback for old format)
         const dependencyUrls = {
           'openzeppelin-contracts': 'https://github.com/OpenZeppelin/openzeppelin-contracts',
           'forge-std': 'https://github.com/foundry-rs/forge-std',
@@ -534,9 +566,9 @@ app.post('/api/courses', AuthMiddleware.authenticateToken, AuthMiddleware.requir
           'prb-math': 'https://github.com/PaulRBerg/prb-math'
         };
         
-        for (const dependency of dependencies) {
+        for (const dependency of allDependencies) {
           try {
-            const dependencyUrl = dependencyUrls[dependency.name] || dependency.url;
+            const dependencyUrl = dependency.url || dependencyUrls[dependency.name];
             if (!dependencyUrl) {
               console.warn(`⚠️ No URL found for dependency: ${dependency.name}`);
               continue;

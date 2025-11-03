@@ -55,6 +55,26 @@ export class AdminCompilationManager {
           // Initialize Foundry project
           await execAsync('forge init --force .', { cwd: courseProjectPath });
           console.log('✅ Foundry project initialized');
+          
+          // Install default dependencies (forge-std and openzeppelin-contracts)
+          const defaultDependencies = [
+            { name: 'forge-std', url: 'foundry-rs/forge-std' },
+            { name: 'openzeppelin-contracts', url: 'OpenZeppelin/openzeppelin-contracts' }
+          ];
+          
+          for (const dep of defaultDependencies) {
+            try {
+              console.log(`📦 Installing ${dep.name}...`);
+              const installResult = await execAsync(`forge install ${dep.url}`, { 
+                cwd: courseProjectPath,
+                timeout: 60000 // 60 second timeout
+              });
+              console.log(`✅ ${dep.name} installed`);
+            } catch (installError) {
+              console.warn(`⚠️  Failed to install ${dep.name}:`, installError.message);
+              // Continue with other dependencies even if one fails
+            }
+          }
         } catch (initError) {
           // If forge init fails, just create the basic structure
           console.log('⚠️  Forge init failed, creating basic structure:', initError.message);

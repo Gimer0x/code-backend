@@ -21,6 +21,7 @@
     "create-admin": "node scripts/create-admin.js",
     "verify-admin": "node scripts/verify-admin.js",
     "check-course": "node scripts/check-course.js",
+    "test-course-creation": "node test-course-creation.js",
     "postdeploy": "npm run db:migrate:prod"
   },
   "keywords": [

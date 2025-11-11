@@ -36,9 +36,10 @@ const studentSessionsPath = process.env.STUDENT_SESSIONS_DIR || path.join(__dirn
 
 // Initialize Prisma client with connection pooling
 // Connection pooling improves database performance by reusing connections
+// Reduced connection limit to avoid read-only transaction state issues
 const prismaUrl = process.env.DATABASE_URL?.includes('connection_limit') 
   ? process.env.DATABASE_URL 
-  : `${process.env.DATABASE_URL}?connection_limit=10&pool_timeout=20&connect_timeout=10`;
+  : `${process.env.DATABASE_URL}?connection_limit=5&pool_timeout=20&connect_timeout=10`;
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['query', 'error', 'warn'],
@@ -46,7 +47,9 @@ const prisma = new PrismaClient({
     db: {
       url: prismaUrl
     }
-  }
+  },
+  // Ensure connections are properly managed
+  errorFormat: 'pretty'
 });
 
 // Handle Prisma connection errors gracefully

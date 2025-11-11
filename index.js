@@ -38,7 +38,7 @@ const studentSessionsPath = process.env.STUDENT_SESSIONS_DIR || path.join(__dirn
 // Connection pooling improves database performance by reusing connections
 const prismaUrl = process.env.DATABASE_URL?.includes('connection_limit') 
   ? process.env.DATABASE_URL 
-  : `${process.env.DATABASE_URL}?connection_limit=10&pool_timeout=20`;
+  : `${process.env.DATABASE_URL}?connection_limit=10&pool_timeout=20&connect_timeout=10`;
 
 const prisma = new PrismaClient({
   log: process.env.NODE_ENV === 'production' ? ['error'] : ['query', 'error', 'warn'],
@@ -49,6 +49,54 @@ const prisma = new PrismaClient({
   }
 });
 
+// Handle Prisma connection errors gracefully
+// Note: Prisma doesn't have a direct error event, errors are caught in try/catch blocks
+
+// Reconnect on connection loss
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 5;
+
+async function reconnectPrisma() {
+  if (reconnectAttempts >= maxReconnectAttempts) {
+    console.error('Max Prisma reconnection attempts reached');
+    return;
+  }
+  
+  try {
+    reconnectAttempts++;
+    console.log(`Attempting to reconnect Prisma (attempt ${reconnectAttempts})...`);
+    await prisma.$connect();
+    console.log('✅ Prisma reconnected successfully');
+    reconnectAttempts = 0;
+  } catch (error) {
+    console.error('❌ Prisma reconnection failed:', error);
+    // Retry after 2 seconds
+    setTimeout(reconnectPrisma, 2000);
+  }
+}
+
+// Helper function to handle Prisma queries with automatic reconnection
+async function prismaQuery(queryFn, retries = 2) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      return await queryFn();
+    } catch (error) {
+      // Check if it's a connection error
+      if (error.code === 'P1017' || error.message?.includes('Server has closed the connection')) {
+        if (i < retries) {
+          console.log(`Database connection lost, attempting reconnect (retry ${i + 1}/${retries})...`);
+          await reconnectPrisma();
+          // Wait a bit before retrying
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          continue;
+        }
+      }
+      // If not a connection error or max retries reached, throw
+      throw error;
+    }
+  }
+}
+
 // Test database connection on startup
 async function testDatabaseConnection() {
   try {
@@ -56,12 +104,17 @@ async function testDatabaseConnection() {
     console.log('✅ Database connection successful');
   } catch (error) {
     console.error('❌ Database connection failed:', error.message);
-    // Don't exit immediately - let the app start and retry on first request
-    // This allows Fly.io to retry if database is temporarily unavailable
+    // Attempt reconnection
+    reconnectPrisma();
   }
 }
 
 testDatabaseConnection();
+
+// Handle process exit
+process.on('beforeExit', async () => {
+  await prisma.$disconnect();
+});
 
 // Initialize services
 const courseService = new CourseService();
@@ -73,6 +126,11 @@ const adminTestManager = new AdminTestManager();
 
 // Middleware
 app.use(helmet());
+
+// Trust proxy (required for Fly.io and rate limiting)
+// Trust only Fly.io's proxy (more secure than trust: true)
+// Fly.io uses X-Forwarded-For header from their proxy
+app.set('trust proxy', 1); // Trust only the first proxy (Fly.io)
 
 // CORS configuration
 const corsOptions = {

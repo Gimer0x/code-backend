@@ -1,9 +1,41 @@
 import { PrismaClient } from '@prisma/client';
 
-// Configure connection URL with pooling parameters
-const prismaUrl = process.env.DATABASE_URL?.includes('connection_limit') 
-  ? process.env.DATABASE_URL 
-  : `${process.env.DATABASE_URL}?connection_limit=5&pool_timeout=20&connect_timeout=10&statement_cache_size=0`;
+// Configure connection URL with pooling and SSL parameters
+function buildPrismaUrl() {
+  const baseUrl = process.env.DATABASE_URL;
+  if (!baseUrl) return baseUrl;
+  
+  // Check if URL already has parameters
+  const hasParams = baseUrl.includes('?');
+  const separator = hasParams ? '&' : '?';
+  
+  // Build parameter string
+  const params = new URLSearchParams();
+  
+  // Add connection parameters (only if not already present)
+  if (!baseUrl.includes('connection_limit=')) {
+    params.append('connection_limit', '5');
+  }
+  if (!baseUrl.includes('pool_timeout=')) {
+    params.append('pool_timeout', '20');
+  }
+  if (!baseUrl.includes('connect_timeout=')) {
+    params.append('connect_timeout', '10');
+  }
+  if (!baseUrl.includes('statement_cache_size=')) {
+    params.append('statement_cache_size', '0');
+  }
+  
+  // Add SSL parameters for Fly.io PostgreSQL (required for TLS connections)
+  if (!baseUrl.includes('sslmode=')) {
+    params.append('sslmode', 'require');
+  }
+  
+  const paramString = params.toString();
+  return paramString ? `${baseUrl}${separator}${paramString}` : baseUrl;
+}
+
+const prismaUrl = buildPrismaUrl();
 
 // Create Prisma client with optimized settings
 const prisma = new PrismaClient({

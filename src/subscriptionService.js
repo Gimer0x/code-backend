@@ -1,6 +1,4 @@
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma, prismaQuery } from './prismaClient.js';
 
 /**
  * Subscription Service for managing paid plans

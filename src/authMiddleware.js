@@ -1,8 +1,6 @@
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { prisma, prismaQuery } from './prismaClient.js';
 const JWT_SECRET = process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-in-production';
 
 /**
@@ -27,8 +25,8 @@ export class AuthMiddleware {
 
       const decoded = jwt.verify(token, JWT_SECRET);
       
-      // Get user from database
-      const user = await prisma.user.findUnique({
+      // Get user from database with automatic retry on connection errors
+      const user = await prismaQuery(() => prisma.user.findUnique({
         where: { id: decoded.userId },
         select: {
           id: true,
@@ -39,7 +37,7 @@ export class AuthMiddleware {
           createdAt: true,
           updatedAt: true
         }
-      });
+      }));
 
       if (!user) {
         return res.status(401).json({

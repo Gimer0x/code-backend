@@ -1,8 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma, prismaQuery } from './prismaClient.js';
 import { PasswordUtils, JWTUtils } from './authMiddleware.js';
 import { SubscriptionService } from './subscriptionService.js';
-
-const prisma = new PrismaClient();
 
 /**
  * Authentication service for user management

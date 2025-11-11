@@ -1,9 +1,7 @@
-import { PrismaClient } from '@prisma/client';
+import { prisma, prismaQuery } from './prismaClient.js';
 import path from 'path';
 import { promises as fs } from 'fs';
 import { spawn } from 'child_process';
-
-const prisma = new PrismaClient();
 
 function getCourseRoot() {
   let dir = process.env.COURSE_WORKSPACE_DIR;

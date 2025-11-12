@@ -1194,7 +1194,10 @@ app.post('/api/student/test', AuthMiddleware.authenticateToken, studentLimiter, 
 // Get courses that a user has started
 app.get('/api/student/courses', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
   try {
+    console.log(`[GET /api/student/courses] Request from user: ${req.user.id} (${req.user.email || 'no email'})`);
     const result = await courseService.getUserStartedCourses(req.user.id);
+    
+    console.log(`[GET /api/student/courses] Result: success=${result.success}, courses=${result.courses?.length || 0}, total=${result.total || 0}`);
     
     if (!result.success) {
       return res.status(500).json(result);
@@ -1202,7 +1205,7 @@ app.get('/api/student/courses', AuthMiddleware.authenticateToken, studentLimiter
     
     res.status(200).json(result);
   } catch (error) {
-    console.error('Get user started courses error:', error);
+    console.error('[GET /api/student/courses] Error:', error);
     res.status(500).json({
       success: false,
       error: error.message || 'Failed to retrieve user courses'

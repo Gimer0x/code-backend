@@ -251,6 +251,8 @@ export class CourseService {
    */
   async getUserStartedCourses(userId) {
     try {
+      console.log(`[getUserStartedCourses] Looking up courses for userId: ${userId}`);
+      
       // Get distinct course IDs from StudentProgress where user has started
       const studentProgress = await prismaQuery(() =>
         prisma.studentProgress.findMany({
@@ -260,10 +262,14 @@ export class CourseService {
         })
       );
 
+      console.log(`[getUserStartedCourses] Found ${studentProgress?.length || 0} StudentProgress records`);
+
       if (!studentProgress || studentProgress.length === 0) {
+        console.log(`[getUserStartedCourses] No courses found for user ${userId}`);
         return {
           success: true,
           courses: [],
+          total: 0,
           message: 'User has not started any courses'
         };
       }

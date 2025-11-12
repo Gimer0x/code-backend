@@ -1191,6 +1191,25 @@ app.post('/api/student/test', AuthMiddleware.authenticateToken, studentLimiter, 
   }
 });
 
+// Get courses that a user has started
+app.get('/api/student/courses', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const result = await courseService.getUserStartedCourses(req.user.id);
+    
+    if (!result.success) {
+      return res.status(500).json(result);
+    }
+    
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Get user started courses error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to retrieve user courses'
+    });
+  }
+});
+
 // Progress
 app.get('/api/student/progress', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
   try {

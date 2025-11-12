@@ -245,6 +245,95 @@ export class CourseService {
   }
 
   /**
+   * Get all courses that a user has started
+   * @param {string} userId - User ID
+   * @returns {Promise<Object>} List of courses the user has started
+   */
+  async getUserStartedCourses(userId) {
+    try {
+      // Get distinct course IDs from StudentProgress where user has started
+      const studentProgress = await prismaQuery(() =>
+        prisma.studentProgress.findMany({
+          where: { userId },
+          select: { courseId: true },
+          distinct: ['courseId']
+        })
+      );
+
+      if (!studentProgress || studentProgress.length === 0) {
+        return {
+          success: true,
+          courses: [],
+          message: 'User has not started any courses'
+        };
+      }
+
+      const courseIds = studentProgress.map(sp => sp.courseId);
+
+      // Get full course details with module count
+      const courses = await prismaQuery(() =>
+        prisma.course.findMany({
+          where: {
+            id: { in: courseIds },
+            status: 'ACTIVE' // Only return active courses
+          },
+          include: {
+            creator: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            },
+            _count: {
+              select: {
+                modules: true
+              }
+            }
+          },
+          orderBy: { createdAt: 'desc' }
+        })
+      );
+
+      // Calculate total lessons per course (count lessons through modules)
+      const coursesWithLessonCount = await Promise.all(
+        courses.map(async (course) => {
+          const lessonCount = await prismaQuery(() =>
+            prisma.lesson.count({
+              where: {
+                module: {
+                  courseId: course.id
+                }
+              }
+            })
+          );
+
+          return {
+            ...course,
+            _count: {
+              ...course._count,
+              lessons: lessonCount
+            }
+          };
+        })
+      );
+
+      return {
+        success: true,
+        courses: coursesWithLessonCount,
+        total: coursesWithLessonCount.length
+      };
+
+    } catch (error) {
+      console.error('Get user started courses error:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
    * Update course
    * @param {string} courseId - Course ID
    * @param {Object} updateData - Update data

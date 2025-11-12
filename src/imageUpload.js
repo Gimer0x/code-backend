@@ -41,8 +41,9 @@ function sanitizeFilename(filename) {
 // Image processing function
 export async function processImage(buffer, filename) {
   try {
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = path.join(process.cwd(), 'uploads', 'courses');
+    // Store uploads in foundry-projects volume for persistence
+    // Fly.io only supports 1 volume per machine, so we use the foundry-projects volume
+    const uploadsDir = path.join(process.cwd(), 'foundry-projects', 'uploads', 'courses');
     await fs.mkdir(uploadsDir, { recursive: true });
 
     // Generate unique filename with sanitization

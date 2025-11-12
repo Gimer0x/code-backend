@@ -1067,10 +1067,11 @@ app.post('/api/lessons/:lessonId/quiz-questions', AuthMiddleware.authenticateTok
   }
 });
 
-// Serve uploaded images
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Serve uploaded images from foundry-projects volume (persistent storage)
+// Fly.io only supports 1 volume per machine, so uploads are stored in foundry-projects
+app.use('/uploads', express.static(path.join(__dirname, 'foundry-projects', 'uploads')));
 // Alias for images to allow frontend to reference a consistent path
-app.use('/api/images', express.static(path.join(__dirname, 'uploads')));
+app.use('/api/images', express.static(path.join(__dirname, 'foundry-projects', 'uploads')));
 
 // ========== AI Chat Endpoints ==========
 app.post('/api/ai/chat', AuthMiddleware.authenticateToken, aiLimiter, async (req, res) => {

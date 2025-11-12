@@ -24,3 +24,7 @@ primary_region = 'sjc'
 [mounts]
   source = "foundry_projects_vol"
   destination = "/app/foundry-projects"
+
+[[mounts]]
+  source = "uploads_vol"
+  destination = "/app/uploads"

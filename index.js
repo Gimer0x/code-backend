@@ -1191,6 +1191,42 @@ app.post('/api/student/test', AuthMiddleware.authenticateToken, studentLimiter, 
   }
 });
 
+// Start/enroll in a course
+app.post('/api/student/courses/start', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
+  try {
+    const { courseId } = req.body;
+
+    if (!courseId) {
+      return res.status(400).json({
+        success: false,
+        error: 'courseId is required',
+        code: 'MISSING_COURSE_ID'
+      });
+    }
+
+    console.log(`[POST /api/student/courses/start] User ${req.user.id} (${req.user.email || 'no email'}) starting course: ${courseId}`);
+    
+    const result = await courseService.startCourse(req.user.id, courseId);
+    
+    if (!result.success) {
+      // Return appropriate status codes based on error
+      const statusCode = result.code === 'COURSE_NOT_FOUND' ? 404 : 
+                        result.code === 'COURSE_INACTIVE' ? 403 : 400;
+      return res.status(statusCode).json(result);
+    }
+    
+    console.log(`[POST /api/student/courses/start] Success: User enrolled in course ${courseId}`);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('[POST /api/student/courses/start] Error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to start course',
+      code: 'START_COURSE_FAILED'
+    });
+  }
+});
+
 // Get courses that a user has started
 app.get('/api/student/courses', AuthMiddleware.authenticateToken, studentLimiter, async (req, res) => {
   try {

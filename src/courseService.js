@@ -383,6 +383,114 @@ export class CourseService {
   }
 
   /**
+   * Start/enroll a user in a course
+   * Creates an initial StudentProgress record for the first lesson
+   * @param {string} userId - User ID
+   * @param {string} courseId - Course ID
+   * @returns {Promise<Object>} Enrollment result
+   */
+  async startCourse(userId, courseId) {
+    try {
+      // Verify course exists and is active
+      const course = await prisma.course.findUnique({
+        where: { id: courseId },
+        include: {
+          modules: {
+            include: {
+              lessons: {
+                orderBy: { order: 'asc' }
+              }
+            },
+            orderBy: { order: 'asc' }
+          }
+        }
+      });
+
+      if (!course) {
+        return {
+          success: false,
+          error: 'Course not found',
+          code: 'COURSE_NOT_FOUND'
+        };
+      }
+
+      if (course.status !== 'ACTIVE') {
+        return {
+          success: false,
+          error: 'Course is not active',
+          code: 'COURSE_INACTIVE'
+        };
+      }
+
+      // Check if user already has any progress in this course
+      const existingProgress = await prisma.studentProgress.findFirst({
+        where: {
+          userId,
+          courseId
+        }
+      });
+
+      if (existingProgress) {
+        // User already enrolled, return success
+        return {
+          success: true,
+          message: 'User is already enrolled in this course',
+          alreadyEnrolled: true
+        };
+      }
+
+      // Find the first lesson (first module, first lesson by order)
+      const firstModule = course.modules[0];
+      if (!firstModule || !firstModule.lessons || firstModule.lessons.length === 0) {
+        return {
+          success: false,
+          error: 'Course has no lessons',
+          code: 'NO_LESSONS'
+        };
+      }
+
+      const firstLesson = firstModule.lessons[0];
+
+      // Create initial StudentProgress record for the first lesson
+      // This marks the user as enrolled in the course
+      await prisma.studentProgress.create({
+        data: {
+          userId,
+          courseId,
+          lessonId: firstLesson.id,
+          isCompleted: false,
+          codeContent: null
+        }
+      });
+
+      return {
+        success: true,
+        message: 'Course enrollment successful',
+        courseId,
+        lessonId: firstLesson.id
+      };
+
+    } catch (error) {
+      console.error('Start course error:', error);
+      
+      // Handle unique constraint violation (race condition)
+      if (error.code === 'P2002') {
+        return {
+          success: true,
+          message: 'User is already enrolled in this course',
+          alreadyEnrolled: true
+        };
+      }
+
+      return {
+        success: false,
+        error: error.message || 'Failed to enroll in course',
+        code: 'ENROLLMENT_FAILED'
+      };
+    }
+  }
+
+  /**
    * Delete course
    * @param {string} courseId - Course ID
    * @returns {Promise<Object>} Delete result

@@ -20,6 +20,8 @@
     "update-admin-password": "node scripts/update-admin-password.js",
     "create-admin": "node scripts/create-admin.js",
     "verify-admin": "node scripts/verify-admin.js",
+    "check-duplicate-emails": "node scripts/check-duplicate-emails.js",
+    "delete-user": "node scripts/delete-user.js",
     "check-course": "node scripts/check-course.js",
     "test-course-creation": "node test-course-creation.js",
     "postdeploy": "npm run db:migrate:prod"
